@@ -22,6 +22,7 @@ addEventListener("keydown", (event) => {
     // open until the user blurs the input.
     if (toggle.checked) input.focus();
     else toggle.click(), input.focus(), toggle.click();
+    input.value = sessionStorage.getItem("search-query") ?? "";
     input.select();
     event.preventDefault();
   }
