@@ -44,7 +44,7 @@ input.addEventListener("input", () => {
       : `<div>${results.length.toLocaleString("en-US")} result${
           results.length === 1 ? "" : "s"
         }</div><ol>${renderResults(results)}</ol>`;
-  resultsContainer.querySelector(`.${activeClass}`).scrollIntoView({block: "nearest"});
+  resultsContainer.querySelector(`.${activeClass}`)?.scrollIntoView({block: "nearest"});
 });
 
 function renderResults(results) {
