@@ -8,34 +8,17 @@ import type {RuleInline} from "markdown-it/lib/parser_inline.js";
 import type {RenderRule} from "markdown-it/lib/renderer.js";
 import MarkdownItAnchor from "markdown-it-anchor";
 import type {Config} from "./config.js";
-import {mergeStyle} from "./config.js";
-import type {FrontMatter} from "./frontMatter.js";
 import {readFrontMatter} from "./frontMatter.js";
-import {rewriteHtmlPaths} from "./html.js";
 import {parseInfo} from "./info.js";
-import type {JavaScriptNode} from "./javascript/parse.js";
 import {parseJavaScript} from "./javascript/parse.js";
-import {isAssetPath, parseRelativeUrl, relativePath} from "./path.js";
+import {isAssetPath, parseRelativeUrl} from "./path.js";
+import type {RenderCode, RenderPage} from "./render.js";
+import {resolveHtml, resolveStyle} from "./render.js";
 import {transpileSql} from "./sql.js";
 import {transpileTag} from "./tag.js";
-import {InvalidThemeError} from "./theme.js";
-import {red} from "./tty.js";
 
-export interface MarkdownCode {
-  id: string;
-  node: JavaScriptNode;
-}
-
-export interface MarkdownPage {
-  title: string | null;
-  head: string | null;
-  header: string | null;
-  body: string;
-  footer: string | null;
-  data: FrontMatter;
-  style: string | null;
-  code: MarkdownCode[];
-}
+export type MarkdownCode = RenderCode; // TODO remove
+export type MarkdownPage = RenderPage; // TODO remove
 
 interface ParseContext {
   code: MarkdownCode[];
@@ -333,13 +316,13 @@ export function parseMarkdown(input: string, options: ParseOptions): MarkdownPag
   const tokens = md.parse(content, context);
   const body = md.renderer.render(tokens, md.options, context); // Note: mutates code!
   return {
-    head: getHtml("head", data, options),
-    header: getHtml("header", data, options),
+    head: resolveHtml("head", data, options),
+    header: resolveHtml("header", data, options),
     body,
-    footer: getHtml("footer", data, options),
+    footer: resolveHtml("footer", data, options),
     data,
     title: data.title !== undefined ? data.title : findTitle(tokens),
-    style: getStyle(data, options),
+    style: resolveStyle(data, options),
     code
   };
 }
@@ -355,35 +338,6 @@ export function parseMarkdownMetadata(input: string, options: ParseOptions): Pic
         ? data.title
         : findTitle(md.parse(content, {code: [], startLine: 0, currentLine: 0, path}))
   };
-}
-
-function getHtml(
-  key: "head" | "header" | "footer",
-  data: FrontMatter,
-  {path, [key]: defaultValue}: ParseOptions
-): string | null {
-  return data[key] !== undefined
-    ? data[key]
-      ? String(data[key])
-      : null
-    : defaultValue != null
-    ? rewriteHtmlPaths(defaultValue, path)
-    : null;
-}
-
-function getStyle(data: FrontMatter, {path, style = null}: ParseOptions): string | null {
-  try {
-    style = mergeStyle(path, data.style, data.theme, style);
-  } catch (error) {
-    if (!(error instanceof InvalidThemeError)) throw error;
-    console.error(red(String(error))); // TODO error during build
-    style = {theme: []};
-  }
-  return !style
-    ? null
-    : "path" in style
-    ? relativePath(path, style.path)
-    : `observablehq:theme-${style.theme.join(",")}.css`;
 }
 
 // TODO Make this smarter.

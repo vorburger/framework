@@ -1,17 +1,19 @@
 import mime from "mime";
 import type {Config, Page, Script, Section} from "./config.js";
-import {mergeToc} from "./config.js";
+import {mergeStyle, mergeToc} from "./config.js";
 import {getClientPath} from "./files.js";
 import type {Html, HtmlResolvers} from "./html.js";
-import {html, parseHtml, rewriteHtml} from "./html.js";
+import {html, parseHtml, rewriteHtml, rewriteHtmlPaths} from "./html.js";
+import type {JavaScriptNode} from "./javascript/parse.js";
 import {transpileJavaScript} from "./javascript/transpile.js";
-import type {MarkdownPage} from "./markdown.js";
 import type {PageLink} from "./pager.js";
 import {findLink, normalizePath} from "./pager.js";
 import {isAssetPath, relativePath, resolvePath, resolveRelativePath} from "./path.js";
 import type {Resolvers} from "./resolvers.js";
 import {getResolvers} from "./resolvers.js";
 import {rollupClient} from "./rollup.js";
+import {InvalidThemeError} from "./theme.js";
+import {red} from "./tty.js";
 
 export interface RenderOptions extends Config {
   root: string;
@@ -19,11 +21,42 @@ export interface RenderOptions extends Config {
   resolvers?: Resolvers;
 }
 
+export interface RenderPage {
+  title: string | null;
+  head: string | null;
+  header: string | null;
+  body: string;
+  footer: string | null;
+  data: RenderPageConfig;
+  style: string | null;
+  code: RenderCode[];
+}
+
+export interface RenderPageConfig {
+  title?: string | null;
+  toc?: {show?: boolean; label?: string};
+  style?: string | null;
+  theme?: string[];
+  head?: string | null;
+  header?: string | null;
+  footer?: string | null;
+  index?: boolean;
+  keywords?: string[];
+  draft?: boolean;
+  sidebar?: boolean;
+  sql?: {[key: string]: string};
+}
+
+export interface RenderCode {
+  id: string;
+  node: JavaScriptNode;
+}
+
 type RenderInternalOptions =
   | {preview?: false} // build
   | {preview: true}; // preview
 
-export async function renderPage(page: MarkdownPage, options: RenderOptions & RenderInternalOptions): Promise<string> {
+export async function renderPage(page: RenderPage, options: RenderOptions & RenderInternalOptions): Promise<string> {
   const {data} = page;
   const {base, path, title, preview} = options;
   const {loaders, resolvers = await getResolvers(page, options)} = options;
@@ -179,7 +212,7 @@ interface Header {
 
 const tocSelector = "h1:not(:first-of-type), h2:first-child, :not(h1) + h2";
 
-function findHeaders(page: MarkdownPage): Header[] {
+function findHeaders(page: RenderPage): Header[] {
   return Array.from(parseHtml(page.body).document.querySelectorAll(tocSelector))
     .map((node) => ({label: node.textContent, href: node.firstElementChild?.getAttribute("href")}))
     .filter((d): d is Header => !!d.label && !!d.href);
@@ -207,7 +240,7 @@ function renderListItem(page: Page, path: string, normalizeLink: (href: string) 
   }"><a href="${normalizeLink(relativePath(path, page.path))}">${page.name}</a></li>`;
 }
 
-function renderHead(head: MarkdownPage["head"], resolvers: Resolvers, {scripts, root}: RenderOptions): Html {
+function renderHead(head: RenderPage["head"], resolvers: Resolvers, {scripts, root}: RenderOptions): Html {
   const {stylesheets, staticImports, resolveImport, resolveStylesheet} = resolvers;
   const resolveScript = (src: string) => (/^\w+:/.test(src) ? src : resolveImport(relativePath(root, src)));
   return html`<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>${
@@ -241,13 +274,13 @@ function renderModulePreload(href: string): Html {
   return html`\n<link rel="modulepreload" href="${href}">`;
 }
 
-function renderHeader(header: MarkdownPage["header"], resolvers: HtmlResolvers): Html | null {
+function renderHeader(header: RenderPage["header"], resolvers: HtmlResolvers): Html | null {
   return header
     ? html`\n<header id="observablehq-header">\n${html.unsafe(rewriteHtml(header, resolvers))}\n</header>`
     : null;
 }
 
-function renderFooter(footer: MarkdownPage["footer"], resolvers: HtmlResolvers, options: RenderOptions): Html | null {
+function renderFooter(footer: RenderPage["footer"], resolvers: HtmlResolvers, options: RenderOptions): Html | null {
   const {path, md} = options;
   const link = options.pager ? findLink(path, options) : null;
   return link || footer
@@ -266,4 +299,36 @@ function renderPager(path: string, {prev, next}: PageLink, normalizeLink: (href:
 
 function renderRel(path: string, page: Page, rel: "prev" | "next", normalizeLink: (href: string) => string): Html {
   return html`<a rel="${rel}" href="${normalizeLink(relativePath(path, page.path))}"><span>${page.name}</span></a>`;
+}
+
+export function resolveStyle(
+  data: RenderPageConfig,
+  {path, style = null}: {path: string; style?: Config["style"]}
+): string | null {
+  try {
+    style = mergeStyle(path, data.style, data.theme, style);
+  } catch (error) {
+    if (!(error instanceof InvalidThemeError)) throw error;
+    console.error(red(String(error))); // TODO error during build
+    style = {theme: []};
+  }
+  return !style
+    ? null
+    : "path" in style
+    ? relativePath(path, style.path)
+    : `observablehq:theme-${style.theme.join(",")}.css`;
+}
+
+export function resolveHtml(
+  key: "head" | "header" | "footer",
+  data: RenderPageConfig,
+  {path, [key]: defaultValue}: Partial<Pick<Config, typeof key>> & {path: string}
+): string | null {
+  return data[key] !== undefined
+    ? data[key]
+      ? String(data[key])
+      : null
+    : defaultValue != null
+    ? rewriteHtmlPaths(defaultValue, path)
+    : null;
 }

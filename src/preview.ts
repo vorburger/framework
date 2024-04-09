@@ -24,7 +24,8 @@ import {parseMarkdown} from "./markdown.js";
 import type {MarkdownCode, MarkdownPage} from "./markdown.js";
 import {populateNpmCache} from "./npm.js";
 import {isPathImport} from "./path.js";
-import {renderPage} from "./render.js";
+import type {RenderPage} from "./render.js";
+import {renderPage, resolveStyle} from "./render.js";
 import type {Resolvers} from "./resolvers.js";
 import {getResolvers} from "./resolvers.js";
 import {bundleStyles, rollupClient} from "./rollup.js";
@@ -192,9 +193,14 @@ export class PreviewServer {
         // Anything else should 404; static files should be matched above.
         try {
           const options = {path: pathname, ...config, preview: true};
-          const source = await readFile(join(dirname(path), basename(path, ".html") + ".md"), "utf8");
-          const parse = parseMarkdown(source, options);
-          const html = await renderPage(parse, options);
+          let page: RenderPage;
+          if (pathname === "/hello-world") {
+            page = renderHelloWorld(options);
+          } else {
+            const source = await readFile(join(dirname(path), basename(path, ".html") + ".md"), "utf8");
+            page = parseMarkdown(source, options);
+          }
+          const html = await renderPage(page, options);
           end(req, res, html, "text/html");
         } catch (error) {
           if (!isEnoent(error)) throw error; // internal error
@@ -285,7 +291,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
   let tables: Map<string, string> | null = null;
   let stylesheets: string[] | null = null;
   let configWatcher: FSWatcher | null = null;
-  let markdownWatcher: FSWatcher | null = null;
+  let markdownWatcher: FSWatcher | null = null; // TODO rename to pageWatcher
   let attachmentWatcher: FileWatchers | null = null;
   let emptyTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -309,6 +315,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
         break;
       }
       case "change": {
+        // TODO render page loader instead
         const source = await readFile(join(root, path), "utf8");
         const page = parseMarkdown(source, {path, ...config});
         // delay to avoid a possibly-empty file
@@ -362,8 +369,14 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
     path = join(dirname(path), basename(path, ".html") + ".md");
     config = await configPromise;
     const {root, loaders} = config;
-    const source = await readFile(join(root, path), "utf8");
-    const page = parseMarkdown(source, {path, ...config});
+    let page: RenderPage;
+    if (path === "/hello-world.md") {
+      page = renderHelloWorld({path, ...config});
+      return;
+    } else {
+      const source = await readFile(join(root, path), "utf8");
+      page = parseMarkdown(source, {path, ...config});
+    }
     const resolvers = await getResolvers(page, {root, path, loaders});
     if (resolvers.hash !== initialHash) return void send({type: "reload"});
     hash = resolvers.hash;
@@ -373,7 +386,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
     tables = getTables(page);
     stylesheets = Array.from(resolvers.stylesheets, resolvers.resolveStylesheet);
     attachmentWatcher = await loaders.watchFiles(path, getWatchFiles(resolvers), () => watcher("change"));
-    markdownWatcher = watch(join(root, path), (event) => watcher(event));
+    markdownWatcher = watch(join(root, path), (event) => watcher(event)); // TODO listen to page loader instead
     if (config.watchPath) configWatcher = watch(config.watchPath, () => send({type: "reload"}));
   }
 
@@ -527,5 +540,18 @@ function diffStylesheets(oldStylesheets: string[], newStylesheets: string[]): St
   return {
     removed: Array.from(difference(oldStylesheets, newStylesheets)),
     added: Array.from(difference(newStylesheets, oldStylesheets))
+  };
+}
+
+function renderHelloWorld(options: Config & {path: string}): RenderPage {
+  return {
+    title: "Hello, world!",
+    head: null,
+    header: null,
+    body: `<h1>Hello, world!</h1><p>This is a simple example of a server-side-rendered page. The current time is ${new Date()}.</p>`,
+    footer: null,
+    data: {},
+    style: resolveStyle({}, options),
+    code: []
   };
 }
