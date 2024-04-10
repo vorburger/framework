@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {existsSync, watch} from "node:fs";
+import {watch} from "node:fs";
 import type {FSWatcher, WatchEventType} from "node:fs";
 import {access, constants, readFile} from "node:fs/promises";
 import {createServer} from "node:http";
@@ -23,6 +23,8 @@ import {transpileJavaScript, transpileModule} from "./javascript/transpile.js";
 import {parseMarkdown} from "./markdown.js";
 import type {MarkdownCode, MarkdownPage} from "./markdown.js";
 import {populateNpmCache} from "./npm.js";
+import type {PageGenerator} from "./page.js";
+import {findPage} from "./page.js";
 import {isPathImport} from "./path.js";
 import {renderPage} from "./render.js";
 import type {Resolvers} from "./resolvers.js";
@@ -172,7 +174,7 @@ export class PreviewServer {
       } else {
         if ((pathname = normalize(pathname)).startsWith("..")) throw new Error("Invalid path: " + pathname);
 
-        // Normalize the pathname (e.g., dropping ".html").
+        // Normalize the pathname (e.g., dropping ".html" if cleanUrls is true).
         const normalizedPathname = config.md.normalizeLink(pathname);
         if (url.pathname !== normalizedPathname) {
           res.writeHead(302, {Location: normalizedPathname + url.search});
@@ -184,12 +186,11 @@ export class PreviewServer {
         // end of the path.
         if (pathname.endsWith("/")) pathname = join(pathname, "index");
 
-        // Lastly, serve the corresponding Markdown file, if it exists.
-        // Anything else should 404; static files should be matched above.
+        // Lastly, serve the corresponding page, if it exists. Anything else
+        // should 404; static files should be matched above.
         try {
           const options = {path: pathname, ...config, preview: true};
-          const source = await findPage(pathname.replace(/\/.html$/, "") + ".md", options).read();
-          const page = parseMarkdown(source, options);
+          const page = await findPage(pathname.replace(/\/.html$/, "") + ".md", options).generate();
           const html = await renderPage(page, options);
           end(req, res, html, "text/html");
         } catch (error) {
@@ -252,19 +253,6 @@ function end(req: IncomingMessage, res: ServerResponse, content: string, type: s
   }
 }
 
-interface PageGenerator {
-  read(): Promise<string>;
-  readonly path: string;
-}
-
-function findPage(file: string, {root, loaders}: Config): PageGenerator {
-  const filepath = join(root, file);
-  if (existsSync(filepath)) return {read: () => readFile(filepath, "utf-8"), path: filepath};
-  const loader = loaders.find(join("/", file));
-  if (!loader) throw Object.assign(new Error("loader not found"), {code: "ENOENT"});
-  return {read: async () => readFile(join(root, await loader.load()), "utf8"), path: loader.path};
-}
-
 // Note that while we appear to be watching the referenced files here,
 // FileWatchers will magically watch the corresponding data loader if a
 // referenced file does not exist!
@@ -319,8 +307,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
         break;
       }
       case "change": {
-        const source = await pageGenerator.read();
-        const page = parseMarkdown(source, {path, ...config});
+        const page = await pageGenerator.generate();
         // delay to avoid a possibly-empty file
         if (!force && page.body === "") {
           if (!emptyTimeout) {
@@ -369,13 +356,13 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
     path = decodeURI(initialPath);
     if (!(path = normalize(path)).startsWith("/")) throw new Error("Invalid path: " + initialPath);
     if (path.endsWith("/")) path += "index";
-    path = join(dirname(path), basename(path, ".html") + ".md");
+    path = join(dirname(path), basename(path, ".html") + ".md"); // TODO remove .md
     config = await configPromise;
-    pageGenerator = findPage(path, config);
+    pageGenerator = findPage(path, {path, ...config}); // TODO the first path should be .md, the second shouldn’t
     const {root, loaders} = config;
-    const page = parseMarkdown(await pageGenerator.read(), {path, ...config});
+    const page = await pageGenerator.generate();
     const resolvers = await getResolvers(page, {root, path, loaders});
-    if (resolvers.hash !== initialHash) return; // void send({type: "reload"});
+    if (resolvers.hash !== initialHash) return void send({type: "reload"});
     hash = resolvers.hash;
     html = getHtml(page, resolvers);
     code = getCode(page, resolvers);
