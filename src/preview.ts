@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {watch} from "node:fs";
+import {existsSync, watch} from "node:fs";
 import type {FSWatcher, WatchEventType} from "node:fs";
 import {access, constants, readFile} from "node:fs/promises";
 import {createServer} from "node:http";
@@ -24,8 +24,7 @@ import {parseMarkdown} from "./markdown.js";
 import type {MarkdownCode, MarkdownPage} from "./markdown.js";
 import {populateNpmCache} from "./npm.js";
 import {isPathImport} from "./path.js";
-import type {RenderPage} from "./render.js";
-import {renderPage, resolveStyle} from "./render.js";
+import {renderPage} from "./render.js";
 import type {Resolvers} from "./resolvers.js";
 import {getResolvers} from "./resolvers.js";
 import {bundleStyles, rollupClient} from "./rollup.js";
@@ -183,23 +182,14 @@ export class PreviewServer {
 
         // If this path ends with a slash, then add an implicit /index to the
         // end of the path.
-        let path = join(root, pathname);
-        if (pathname.endsWith("/")) {
-          pathname = join(pathname, "index");
-          path = join(path, "index");
-        }
+        if (pathname.endsWith("/")) pathname = join(pathname, "index");
 
         // Lastly, serve the corresponding Markdown file, if it exists.
         // Anything else should 404; static files should be matched above.
         try {
           const options = {path: pathname, ...config, preview: true};
-          let page: RenderPage;
-          if (pathname === "/hello-world") {
-            page = renderHelloWorld(options);
-          } else {
-            const source = await readFile(join(dirname(path), basename(path, ".html") + ".md"), "utf8");
-            page = parseMarkdown(source, options);
-          }
+          const source = await findPage(pathname.replace(/\/.html$/, "") + ".md", options).read();
+          const page = parseMarkdown(source, options);
           const html = await renderPage(page, options);
           end(req, res, html, "text/html");
         } catch (error) {
@@ -217,7 +207,7 @@ export class PreviewServer {
       if (req.method === "GET" && res.statusCode === 404) {
         try {
           const options = {path: "/404", ...config, preview: true};
-          const source = await readFile(join(root, "404.md"), "utf8");
+          const source = await readFile(join(root, "404.md"), "utf8"); // TODO findPage?
           const parse = parseMarkdown(source, options);
           const html = await renderPage(parse, options);
           end(req, res, html, "text/html");
@@ -262,6 +252,19 @@ function end(req: IncomingMessage, res: ServerResponse, content: string, type: s
   }
 }
 
+interface PageGenerator {
+  read(): Promise<string>;
+  readonly path: string;
+}
+
+function findPage(file: string, {root, loaders}: Config): PageGenerator {
+  const filepath = join(root, file);
+  if (existsSync(filepath)) return {read: () => readFile(filepath, "utf-8"), path: filepath};
+  const loader = loaders.find(join("/", file));
+  if (!loader) throw Object.assign(new Error("loader not found"), {code: "ENOENT"});
+  return {read: async () => readFile(join(root, await loader.load()), "utf8"), path: loader.path};
+}
+
 // Note that while we appear to be watching the referenced files here,
 // FileWatchers will magically watch the corresponding data loader if a
 // referenced file does not exist!
@@ -291,20 +294,21 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
   let tables: Map<string, string> | null = null;
   let stylesheets: string[] | null = null;
   let configWatcher: FSWatcher | null = null;
-  let markdownWatcher: FSWatcher | null = null; // TODO rename to pageWatcher
+  let pageGenerator: PageGenerator | null = null;
+  let pageWatcher: FSWatcher | null = null;
   let attachmentWatcher: FileWatchers | null = null;
   let emptyTimeout: ReturnType<typeof setTimeout> | null = null;
 
   console.log(faint("socket open"), req.url);
 
   async function watcher(event: WatchEventType, force = false) {
-    if (!path || !config) throw new Error("not initialized");
+    if (!path || !pageGenerator || !config) throw new Error("not initialized");
     const {root, loaders} = config;
     switch (event) {
       case "rename": {
-        markdownWatcher?.close();
+        pageWatcher?.close();
         try {
-          markdownWatcher = watch(join(root, path), (event) => watcher(event));
+          pageWatcher = watch(pageGenerator.path, (event) => watcher(event));
         } catch (error) {
           if (!isEnoent(error)) throw error;
           console.error(`file no longer exists: ${path}`);
@@ -315,8 +319,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
         break;
       }
       case "change": {
-        // TODO render page loader instead
-        const source = await readFile(join(root, path), "utf8");
+        const source = await pageGenerator.read();
         const page = parseMarkdown(source, {path, ...config});
         // delay to avoid a possibly-empty file
         if (!force && page.body === "") {
@@ -362,23 +365,17 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
   }
 
   async function hello({path: initialPath, hash: initialHash}: {path: string; hash: string}): Promise<void> {
-    if (markdownWatcher || configWatcher || attachmentWatcher) throw new Error("already watching");
+    if (pageWatcher || configWatcher || attachmentWatcher) throw new Error("already watching");
     path = decodeURI(initialPath);
     if (!(path = normalize(path)).startsWith("/")) throw new Error("Invalid path: " + initialPath);
     if (path.endsWith("/")) path += "index";
     path = join(dirname(path), basename(path, ".html") + ".md");
     config = await configPromise;
+    pageGenerator = findPage(path, config);
     const {root, loaders} = config;
-    let page: RenderPage;
-    if (path === "/hello-world.md") {
-      page = renderHelloWorld({path, ...config});
-      return;
-    } else {
-      const source = await readFile(join(root, path), "utf8");
-      page = parseMarkdown(source, {path, ...config});
-    }
+    const page = parseMarkdown(await pageGenerator.read(), {path, ...config});
     const resolvers = await getResolvers(page, {root, path, loaders});
-    if (resolvers.hash !== initialHash) return void send({type: "reload"});
+    if (resolvers.hash !== initialHash) return; // void send({type: "reload"});
     hash = resolvers.hash;
     html = getHtml(page, resolvers);
     code = getCode(page, resolvers);
@@ -386,7 +383,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
     tables = getTables(page);
     stylesheets = Array.from(resolvers.stylesheets, resolvers.resolveStylesheet);
     attachmentWatcher = await loaders.watchFiles(path, getWatchFiles(resolvers), () => watcher("change"));
-    markdownWatcher = watch(join(root, path), (event) => watcher(event)); // TODO listen to page loader instead
+    pageWatcher = watch(pageGenerator.path, (event) => watcher(event));
     if (config.watchPath) configWatcher = watch(config.watchPath, () => send({type: "reload"}));
   }
 
@@ -415,9 +412,9 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
       attachmentWatcher.close();
       attachmentWatcher = null;
     }
-    if (markdownWatcher) {
-      markdownWatcher.close();
-      markdownWatcher = null;
+    if (pageWatcher) {
+      pageWatcher.close();
+      pageWatcher = null;
     }
     if (configWatcher) {
       configWatcher.close();
@@ -540,18 +537,5 @@ function diffStylesheets(oldStylesheets: string[], newStylesheets: string[]): St
   return {
     removed: Array.from(difference(oldStylesheets, newStylesheets)),
     added: Array.from(difference(newStylesheets, oldStylesheets))
-  };
-}
-
-function renderHelloWorld(options: Config & {path: string}): RenderPage {
-  return {
-    title: "Hello, world!",
-    head: null,
-    header: null,
-    body: `<h1>Hello, world!</h1><p>This is a simple example of a server-side-rendered page. The current time is ${new Date()}.</p>`,
-    footer: null,
-    data: {},
-    style: resolveStyle({}, options),
-    code: []
   };
 }
