@@ -44,26 +44,68 @@ export interface PageGenerator {
 }
 
 export function findPage(path: string, config: Config): PageGenerator {
-  const {root, loaders} = config;
-  const file = path.replace(/\.html$/i, "") + ".md";
-  const filepath = join(root, file);
-  if (existsSync(filepath)) {
+  return (
+    maybeStaticHtml(path, config) ??
+    maybeStaticMarkdown(path, config) ??
+    maybeDynamicMarkdown(path, config) ??
+    notFound()
+  );
+}
+
+function pageExtension(path: string, ext: string): string {
+  return path.replace(/\.html$/i, "") + ext;
+}
+
+async function generateMarkdown(file: string, path: string, config: Config): Promise<PageSource> {
+  const source = await readFile(file, "utf-8");
+  return parseMarkdown(source, {...config, path});
+}
+
+function maybeStaticMarkdown(path: string, config: Config): PageGenerator | undefined {
+  const {root} = config;
+  const file = join(root, pageExtension(path, ".md"));
+  if (existsSync(file)) {
     return {
-      path: filepath,
-      async generate() {
-        const source = await readFile(filepath, "utf-8");
-        return parseMarkdown(source, {...config, path});
+      path: file,
+      generate: () => generateMarkdown(file, path, config)
+    };
+  }
+}
+
+function maybeDynamicMarkdown(path: string, config: Config): PageGenerator | undefined {
+  const {root, loaders} = config;
+  const loader = loaders.find(join("/", pageExtension(path, ".md")));
+  if (loader) {
+    return {
+      path: loader.path,
+      generate: async () => generateMarkdown(join(root, await loader.load()), path, config)
+    };
+  }
+}
+
+function maybeStaticHtml(path: string, config: Config): PageGenerator | undefined {
+  const {root} = config;
+  const file = join(root, pageExtension(path, ".html"));
+  if (existsSync(file)) {
+    return {
+      path: file,
+      generate: async () => {
+        const source = await readFile(file, "utf-8");
+        return {
+          title: null, // TODO <title> element
+          head: null, // TODO config.head or <head> element
+          header: null, // TODO config.header or <header> element
+          body: source,
+          footer: null, // TODO config.footer or <footer> element
+          data: {},
+          style: "observablehq:theme-air,midnight.css", // TODO config.style
+          code: [] // TODO <script type="observablehq"> elements?
+        };
       }
     };
   }
-  const loader = loaders.find(join("/", file));
-  if (!loader) throw Object.assign(new Error("loader not found"), {code: "ENOENT"});
-  return {
-    path: loader.path,
-    async generate() {
-      const cachepath = join(root, await loader.load());
-      const source = await readFile(cachepath, "utf-8");
-      return parseMarkdown(source, {...config, path});
-    }
-  };
+}
+
+function notFound(): never {
+  throw Object.assign(new Error("page not found"), {code: "ENOENT"});
 }

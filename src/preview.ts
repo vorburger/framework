@@ -8,6 +8,7 @@ import {join, normalize} from "node:path/posix";
 import {difference} from "d3-array";
 import type {PatchItem} from "fast-array-diff";
 import {getPatch} from "fast-array-diff";
+import deepEqual from "fast-deep-equal";
 import mime from "mime";
 import openBrowser from "open";
 import send from "send";
@@ -275,7 +276,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
   let config: Config | null = null;
   let path: string | null = null;
   let hash: string | null = null;
-  let html: string[] | null = null;
+  let html: HtmlToken[] | null = null;
   let code: Map<string, string> | null = null;
   let files: Map<string, string> | null = null;
   let tables: Map<string, string> | null = null;
@@ -414,8 +415,20 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
   }
 }
 
-function getHtml({body}: MarkdownPage, resolvers: Resolvers): string[] {
-  return Array.from(parseHtml(rewriteHtml(body, resolvers)).document.body.children, (d) => d.outerHTML);
+type HtmlToken = {type: "text"; value: string} | {type: "html"; value: string};
+
+function getHtml({body}: MarkdownPage, resolvers: Resolvers): HtmlToken[] {
+  return Array.from(
+    parseHtml(rewriteHtml(body, resolvers)).document.body.childNodes,
+    (d) =>
+      isElement(d)
+        ? {type: "html", value: d.outerHTML} // Element
+        : {type: "text", value: d.textContent!} // Text
+  );
+}
+
+function isElement(node: ChildNode): node is Element {
+  return node.nodeType === 1;
 }
 
 function getCode({code}: MarkdownPage, resolvers: Resolvers): Map<string, string> {
@@ -502,8 +515,8 @@ function diffTables(
   return patch;
 }
 
-function diffHtml(oldHtml: string[], newHtml: string[]): RedactedPatch<string> {
-  return getPatch(oldHtml, newHtml).map(redactPatch);
+function diffHtml(oldHtml: HtmlToken[], newHtml: HtmlToken[]): RedactedPatch<HtmlToken> {
+  return getPatch(oldHtml, newHtml, deepEqual).map(redactPatch);
 }
 
 type RedactedPatch<T> = RedactedPatchItem<T>[];

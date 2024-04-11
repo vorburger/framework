@@ -5,7 +5,7 @@ import {getClientPath} from "./files.js";
 import type {Html, HtmlResolvers} from "./html.js";
 import {html, parseHtml, rewriteHtml, rewriteHtmlPaths} from "./html.js";
 import {transpileJavaScript} from "./javascript/transpile.js";
-import type {PageSource} from "./page.js";
+import type {PageConfig, PageSource} from "./page.js";
 import type {PageLink} from "./pager.js";
 import {findLink, normalizePath} from "./pager.js";
 import {isAssetPath, relativePath, resolvePath, resolveRelativePath} from "./path.js";
@@ -81,8 +81,7 @@ ${preview ? `\nopen({hash: ${JSON.stringify(resolvers.hash)}, eval: (body) => ev
     toc.show ? html`\n${renderToc(findHeaders(page), toc.label)}` : ""
   }
 <div id="observablehq-center">${renderHeader(page.header, resolvers)}
-<main id="observablehq-main" class="observablehq${draft ? " observablehq--draft" : ""}">
-${html.unsafe(rewriteHtml(page.body, resolvers))}</main>${renderFooter(page.footer, resolvers, options)}
+<main id="observablehq-main" class="observablehq${draft ? " observablehq--draft" : ""}">${html.unsafe(rewriteHtml(page.body, resolvers))}</main>${renderFooter(page.footer, resolvers, options)}
 </div>
 `);
 }
@@ -181,7 +180,7 @@ interface Header {
 
 const tocSelector = "h1:not(:first-of-type), h2:first-child, :not(h1) + h2";
 
-function findHeaders(page: RenderPage): Header[] {
+function findHeaders(page: PageSource): Header[] {
   return Array.from(parseHtml(page.body).document.querySelectorAll(tocSelector))
     .map((node) => ({label: node.textContent, href: node.firstElementChild?.getAttribute("href")}))
     .filter((d): d is Header => !!d.label && !!d.href);
@@ -209,7 +208,7 @@ function renderListItem(page: Page, path: string, normalizeLink: (href: string) 
   }"><a href="${normalizeLink(relativePath(path, page.path))}">${page.name}</a></li>`;
 }
 
-function renderHead(head: RenderPage["head"], resolvers: Resolvers, {scripts, root}: RenderOptions): Html {
+function renderHead(head: PageSource["head"], resolvers: Resolvers, {scripts, root}: RenderOptions): Html {
   const {stylesheets, staticImports, resolveImport, resolveStylesheet} = resolvers;
   const resolveScript = (src: string) => (/^\w+:/.test(src) ? src : resolveImport(relativePath(root, src)));
   return html`<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>${
@@ -243,13 +242,13 @@ function renderModulePreload(href: string): Html {
   return html`\n<link rel="modulepreload" href="${href}">`;
 }
 
-function renderHeader(header: RenderPage["header"], resolvers: HtmlResolvers): Html | null {
+function renderHeader(header: PageSource["header"], resolvers: HtmlResolvers): Html | null {
   return header
     ? html`\n<header id="observablehq-header">\n${html.unsafe(rewriteHtml(header, resolvers))}\n</header>`
     : null;
 }
 
-function renderFooter(footer: RenderPage["footer"], resolvers: HtmlResolvers, options: RenderOptions): Html | null {
+function renderFooter(footer: PageSource["footer"], resolvers: HtmlResolvers, options: RenderOptions): Html | null {
   const {path, md} = options;
   const link = options.pager ? findLink(path, options) : null;
   return link || footer
@@ -271,7 +270,7 @@ function renderRel(path: string, page: Page, rel: "prev" | "next", normalizeLink
 }
 
 export function resolveStyle(
-  data: RenderPageConfig,
+  data: PageConfig,
   {path, style = null}: {path: string; style?: Config["style"]}
 ): string | null {
   try {
@@ -290,7 +289,7 @@ export function resolveStyle(
 
 export function resolveHtml(
   key: "head" | "header" | "footer",
-  data: RenderPageConfig,
+  data: PageConfig,
   {path, [key]: defaultValue}: Partial<Pick<Config, typeof key>> & {path: string}
 ): string | null {
   return data[key] !== undefined
