@@ -1,6 +1,7 @@
 /* eslint-disable import/no-named-as-default-member */
 import {createHash} from "node:crypto";
 import {extname} from "node:path/posix";
+import {transformSync} from "esbuild";
 import he from "he";
 import MarkdownIt from "markdown-it";
 import type {RuleCore} from "markdown-it/lib/parser_core.js";
@@ -42,6 +43,8 @@ function isFalse(attribute: string | undefined): boolean {
 function getLiveSource(content: string, tag: string, attributes: Record<string, string>): string | undefined {
   return tag === "js"
     ? content
+    : tag === "jsx"
+    ? transformSync(content, {loader: "jsx", jsx: "automatic", jsxImportSource: "npm:react"}).code
     : tag === "tex"
     ? transpileTag(content, "tex.block", true)
     : tag === "html"
