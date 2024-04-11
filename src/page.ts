@@ -138,7 +138,7 @@ function maybeJsx(path: string, config: Config): PageGenerator | undefined {
       async generate() {
         const loader = new CommandLoader({
           command: "tsx",
-          args: [fileURLToPath(import.meta.resolve("./jsx.ts")), file],
+          args: [fileURLToPath(import.meta.resolve("./jsx-loader.ts")), file],
           path: file,
           root,
           targetPath: path,
