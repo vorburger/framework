@@ -46,6 +46,7 @@ export interface PageGenerator {
 export function findPage(path: string, config: Config): PageGenerator {
   return (
     maybeStaticHtml(path, config) ??
+    maybeDynamicHtml(path, config) ??
     maybeStaticMarkdown(path, config) ??
     maybeDynamicMarkdown(path, config) ??
     notFound()
@@ -83,25 +84,38 @@ function maybeDynamicMarkdown(path: string, config: Config): PageGenerator | und
   }
 }
 
+async function generateHtml(file: string): Promise<PageSource> {
+  const source = await readFile(file, "utf-8");
+  return {
+    title: null, // TODO <title> element
+    head: null, // TODO config.head or <head> element
+    header: null, // TODO config.header or <header> element
+    body: source,
+    footer: null, // TODO config.footer or <footer> element
+    data: {},
+    style: "observablehq:theme-air,midnight.css", // TODO config.style
+    code: [] // TODO <script type="observablehq"> elements?
+  };
+}
+
 function maybeStaticHtml(path: string, config: Config): PageGenerator | undefined {
   const {root} = config;
   const file = join(root, pageExtension(path, ".html"));
   if (existsSync(file)) {
     return {
       path: file,
-      generate: async () => {
-        const source = await readFile(file, "utf-8");
-        return {
-          title: null, // TODO <title> element
-          head: null, // TODO config.head or <head> element
-          header: null, // TODO config.header or <header> element
-          body: source,
-          footer: null, // TODO config.footer or <footer> element
-          data: {},
-          style: "observablehq:theme-air,midnight.css", // TODO config.style
-          code: [] // TODO <script type="observablehq"> elements?
-        };
-      }
+      generate: () => generateHtml(file)
+    };
+  }
+}
+
+function maybeDynamicHtml(path: string, config: Config): PageGenerator | undefined {
+  const {root, loaders} = config;
+  const loader = loaders.find(join("/", pageExtension(path, ".html")));
+  if (loader) {
+    return {
+      path: loader.path,
+      generate: async () => generateHtml(join(root, await loader.load()))
     };
   }
 }
