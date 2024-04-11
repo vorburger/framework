@@ -19,7 +19,7 @@ import {readConfig} from "./config.js";
 import {HttpError, isEnoent, isHttpError, isSystemError} from "./error.js";
 import {getClientPath} from "./files.js";
 import type {FileWatchers} from "./fileWatchers.js";
-import {parseHtml, rewriteHtml} from "./html.js";
+import {isElement, isText, parseHtml, rewriteHtml} from "./html.js";
 import {transpileJavaScript, transpileModule} from "./javascript/transpile.js";
 import {parseMarkdown} from "./markdown.js";
 import type {MarkdownCode, MarkdownPage} from "./markdown.js";
@@ -418,17 +418,14 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
 type HtmlToken = {type: "text"; value: string} | {type: "html"; value: string};
 
 function getHtml({body}: MarkdownPage, resolvers: Resolvers): HtmlToken[] {
-  return Array.from(
-    parseHtml(rewriteHtml(body, resolvers)).document.body.childNodes,
-    (d) =>
-      isElement(d)
-        ? {type: "html", value: d.outerHTML} // Element
-        : {type: "text", value: d.textContent!} // Text
-  );
+  const {document} = parseHtml(rewriteHtml(body, resolvers));
+  return Array.from(document.body.childNodes)
+    .filter((node): node is Element | Text => isElement(node) || isText(node)) // ignore comments e.g.
+    .map(asHtmlToken);
 }
 
-function isElement(node: ChildNode): node is Element {
-  return node.nodeType === 1;
+function asHtmlToken(node: Element | Text): HtmlToken {
+  return isElement(node) ? {type: "html", value: node.outerHTML} : {type: "text", value: node.textContent ?? ""};
 }
 
 function getCode({code}: MarkdownPage, resolvers: Resolvers): Map<string, string> {

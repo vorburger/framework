@@ -197,11 +197,11 @@ function resolveSrcset(srcset: string, resolve: (specifier: string) => string): 
     .join(", ");
 }
 
-function isText(node: Node): node is Text {
+export function isText(node: Node): node is Text {
   return node.nodeType === 3;
 }
 
-function isElement(node: Node): node is Element {
+export function isElement(node: Node): node is Element {
   return node.nodeType === 1;
 }
 
