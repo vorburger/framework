@@ -4,7 +4,7 @@ import type {FSWatcher, WatchEventType} from "node:fs";
 import {access, constants, readFile} from "node:fs/promises";
 import {createServer} from "node:http";
 import type {IncomingMessage, RequestListener, Server, ServerResponse} from "node:http";
-import {basename, dirname, join, normalize} from "node:path/posix";
+import {join, normalize} from "node:path/posix";
 import {difference} from "d3-array";
 import type {PatchItem} from "fast-array-diff";
 import {getPatch} from "fast-array-diff";
@@ -189,9 +189,8 @@ export class PreviewServer {
         // Lastly, serve the corresponding page, if it exists. Anything else
         // should 404; static files should be matched above.
         try {
-          const options = {path: pathname, ...config, preview: true};
-          const page = await findPage(pathname.replace(/\/.html$/, "") + ".md", options).generate();
-          const html = await renderPage(page, options);
+          const page = await findPage(pathname, config).generate();
+          const html = await renderPage(page, {...config, path: pathname, preview: true});
           end(req, res, html, "text/html");
         } catch (error) {
           if (!isEnoent(error)) throw error; // internal error
@@ -207,7 +206,7 @@ export class PreviewServer {
       }
       if (req.method === "GET" && res.statusCode === 404) {
         try {
-          const options = {path: "/404", ...config, preview: true};
+          const options = {...config, path: "/404", preview: true};
           const source = await readFile(join(root, "404.md"), "utf8"); // TODO findPage?
           const parse = parseMarkdown(source, options);
           const html = await renderPage(parse, options);
@@ -299,7 +298,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
           pageWatcher = watch(pageGenerator.path, (event) => watcher(event));
         } catch (error) {
           if (!isEnoent(error)) throw error;
-          console.error(`file no longer exists: ${path}`);
+          console.error(`page no longer exists: ${path}`);
           socket.terminate();
           return;
         }
@@ -356,9 +355,8 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
     path = decodeURI(initialPath);
     if (!(path = normalize(path)).startsWith("/")) throw new Error("Invalid path: " + initialPath);
     if (path.endsWith("/")) path += "index";
-    path = join(dirname(path), basename(path, ".html") + ".md"); // TODO remove .md
     config = await configPromise;
-    pageGenerator = findPage(path, {path, ...config}); // TODO the first path should be .md, the second shouldn’t
+    pageGenerator = findPage(path, config);
     const {root, loaders} = config;
     const page = await pageGenerator.generate();
     const resolvers = await getResolvers(page, {root, path, loaders});

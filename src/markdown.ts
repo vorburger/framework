@@ -11,14 +11,14 @@ import type {Config} from "./config.js";
 import {readFrontMatter} from "./frontMatter.js";
 import {parseInfo} from "./info.js";
 import {parseJavaScript} from "./javascript/parse.js";
+import type {PageCode, PageSource} from "./page.js";
 import {isAssetPath, parseRelativeUrl} from "./path.js";
-import type {RenderCode, RenderPage} from "./render.js";
 import {resolveHtml, resolveStyle} from "./render.js";
 import {transpileSql} from "./sql.js";
 import {transpileTag} from "./tag.js";
 
-export type MarkdownCode = RenderCode; // TODO remove
-export type MarkdownPage = RenderPage; // TODO remove
+export type MarkdownCode = PageCode; // TODO remove
+export type MarkdownPage = PageSource; // TODO remove
 
 interface ParseContext {
   code: MarkdownCode[];

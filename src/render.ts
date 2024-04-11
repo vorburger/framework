@@ -4,8 +4,8 @@ import {mergeStyle, mergeToc} from "./config.js";
 import {getClientPath} from "./files.js";
 import type {Html, HtmlResolvers} from "./html.js";
 import {html, parseHtml, rewriteHtml, rewriteHtmlPaths} from "./html.js";
-import type {JavaScriptNode} from "./javascript/parse.js";
 import {transpileJavaScript} from "./javascript/transpile.js";
+import type {PageSource} from "./page.js";
 import type {PageLink} from "./pager.js";
 import {findLink, normalizePath} from "./pager.js";
 import {isAssetPath, relativePath, resolvePath, resolveRelativePath} from "./path.js";
@@ -21,42 +21,11 @@ export interface RenderOptions extends Config {
   resolvers?: Resolvers;
 }
 
-export interface RenderPage {
-  title: string | null;
-  head: string | null;
-  header: string | null;
-  body: string;
-  footer: string | null;
-  data: RenderPageConfig;
-  style: string | null;
-  code: RenderCode[];
-}
-
-export interface RenderPageConfig {
-  title?: string | null;
-  toc?: {show?: boolean; label?: string};
-  style?: string | null;
-  theme?: string[];
-  head?: string | null;
-  header?: string | null;
-  footer?: string | null;
-  index?: boolean;
-  keywords?: string[];
-  draft?: boolean;
-  sidebar?: boolean;
-  sql?: {[key: string]: string};
-}
-
-export interface RenderCode {
-  id: string;
-  node: JavaScriptNode;
-}
-
 type RenderInternalOptions =
   | {preview?: false} // build
   | {preview: true}; // preview
 
-export async function renderPage(page: RenderPage, options: RenderOptions & RenderInternalOptions): Promise<string> {
+export async function renderPage(page: PageSource, options: RenderOptions & RenderInternalOptions): Promise<string> {
   const {data} = page;
   const {base, path, title, preview} = options;
   const {loaders, resolvers = await getResolvers(page, options)} = options;
