@@ -20,7 +20,7 @@ import {HttpError, isEnoent, isHttpError, isSystemError} from "./error.js";
 import {getClientPath} from "./files.js";
 import type {FileWatchers} from "./fileWatchers.js";
 import {isComment, isElement, isText, parseHtml, rewriteHtml} from "./html.js";
-import {transpileJavaScript, transpileModule} from "./javascript/transpile.js";
+import {readJavaScript, transpileJavaScript, transpileModule} from "./javascript/transpile.js";
 import {parseMarkdown} from "./markdown.js";
 import type {MarkdownCode, MarkdownPage} from "./markdown.js";
 import {populateNpmCache} from "./npm.js";
@@ -141,7 +141,7 @@ export class PreviewServer {
             end(req, res, await bundleStyles({path: filepath}), "text/css");
             return;
           } else if (pathname.endsWith(".js")) {
-            const input = await readFile(join(root, path), "utf-8");
+            const input = await readJavaScript(join(root, path));
             const output = await transpileModule(input, {root, path});
             end(req, res, output, "text/javascript");
             return;
