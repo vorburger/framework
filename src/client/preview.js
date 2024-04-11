@@ -51,7 +51,9 @@ export function open({hash, eval: compile} = {}) {
                 const child =
                   item.type === "html"
                     ? document.createRange().createContextualFragment(item.value)
-                    : document.createTextNode(item.value);
+                    : item.type === "text"
+                    ? document.createTextNode(item.value)
+                    : document.createComment(item.value);
                 if (pos < root.childNodes.length) {
                   root.insertBefore(child, root.childNodes[pos]);
                 } else {
