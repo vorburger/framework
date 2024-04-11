@@ -132,6 +132,7 @@ function maybeJsx(path: string, config: Config): PageGenerator | undefined {
     return {
       path: file, // TODO transitive imports
       async generate() {
+        // TODO use tsx to evaluate as a separate process instead of importing
         await import("tsx/esm");
         const {renderToString} = await import("react-dom/server");
         const {mtimeMs} = await stat(file);
