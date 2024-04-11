@@ -283,12 +283,12 @@ export abstract class Loader {
   abstract exec(output: WriteStream, effects?: LoadEffects): Promise<void>;
 }
 
-interface CommandLoaderOptions extends LoaderOptions {
+export interface CommandLoaderOptions extends LoaderOptions {
   command: string;
   args: string[];
 }
 
-class CommandLoader extends Loader {
+export class CommandLoader extends Loader {
   /**
    * The command to run, such as "node" for a JavaScript loader, "tsx" for
    * TypeScript, and "sh" for a shell script. "noop" when we only need to

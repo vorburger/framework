@@ -1,10 +1,12 @@
 import {existsSync} from "node:fs";
 import {readFile, stat} from "node:fs/promises";
 import {join} from "node:path/posix";
-import {pathToFileURL} from "node:url";
+import {fileURLToPath, pathToFileURL} from "node:url";
 import type {Config} from "./config.js";
 import type {JavaScriptNode} from "./javascript/parse.js";
 import {parseMarkdown} from "./markdown.js";
+import {spawn} from "cross-spawn";
+import {CommandLoader} from "./dataloader.js";
 
 export interface PageSource {
   title: string | null;
@@ -125,19 +127,24 @@ function maybeDynamicHtml(path: string, config: Config): PageGenerator | undefin
   }
 }
 
+// TODO use tsx --watch to watch for changes
+// TODO handle errors (syntax errors especially)
 function maybeJsx(path: string, config: Config): PageGenerator | undefined {
   const {root} = config;
   const file = join(root, pageExtension(path, ".jsx"));
   if (existsSync(file)) {
     return {
-      path: file, // TODO transitive imports
+      path: file,
       async generate() {
-        // TODO use tsx to evaluate as a separate process instead of importing
-        await import("tsx/esm");
-        const {renderToString} = await import("react-dom/server");
-        const {mtimeMs} = await stat(file);
-        const render = (await import(`${pathToFileURL(file).href}?${mtimeMs}`)).default;
-        return fromHtml(renderToString(render()));
+        const loader = new CommandLoader({
+          command: "tsx",
+          args: [fileURLToPath(import.meta.resolve("./jsx.ts")), file],
+          path: file,
+          root,
+          targetPath: path,
+          useStale: false
+        });
+        return generateHtml(join(root, await loader.load()));
       }
     };
   }
