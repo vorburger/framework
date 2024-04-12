@@ -1,12 +1,11 @@
 import {existsSync} from "node:fs";
-import {readFile, stat} from "node:fs/promises";
+import {readFile} from "node:fs/promises";
 import {join} from "node:path/posix";
-import {fileURLToPath, pathToFileURL} from "node:url";
+import {fileURLToPath} from "node:url";
 import type {Config} from "./config.js";
+import {CommandLoader} from "./dataloader.js";
 import type {JavaScriptNode} from "./javascript/parse.js";
 import {parseMarkdown} from "./markdown.js";
-import {spawn} from "cross-spawn";
-import {CommandLoader} from "./dataloader.js";
 
 export interface PageSource {
   title: string | null;
@@ -46,6 +45,7 @@ export interface PageGenerator {
   generate(): Promise<PageSource>;
 }
 
+// TODO visitMarkdownFiles is no longer enough to find all pages
 export function findPage(path: string, config: Config): PageGenerator {
   return (
     maybeStaticHtml(path, config) ??

@@ -5,7 +5,7 @@ export default function App() {
   const [counter, setCounter] = useState(0);
   return (
     <>
-      <h1>Hello, JSX {counter}!</h1>
+      <h3>This is rendered by JSX! The current count is {counter}.</h3>
       <p>JSX is a syntax extension for JavaScript.</p>
       <Card title="Untitled card">It was written to be used with React.</Card>
       <p>Below is an example of markdown in JSX.</p>
