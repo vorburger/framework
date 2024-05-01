@@ -1,8 +1,10 @@
+import {createHash} from "node:crypto";
 import type {Stats} from "node:fs";
-import {stat} from "node:fs/promises";
+import {readFile, stat} from "node:fs/promises";
 import {join} from "node:path/posix";
 import * as clack from "@clack/prompts";
 import wrapAnsi from "wrap-ansi";
+import type {BuildEffects, BuildOptions} from "./build.js";
 import {FileBuildEffects, build} from "./build.js";
 import type {ClackEffects} from "./clack.js";
 import {commandRequiresAuthenticationMessage} from "./commandInstruction.js";
@@ -15,6 +17,7 @@ import type {AuthEffects} from "./observableApiAuth.js";
 import {defaultEffects as defaultAuthEffects, formatUser, loginInner, validWorkspaces} from "./observableApiAuth.js";
 import {ObservableApiClient} from "./observableApiClient.js";
 import type {
+  DeployManifestFile,
   GetCurrentUserResponse,
   GetDeployResponse,
   GetProjectResponse,
@@ -26,7 +29,7 @@ import {defaultEffects as defaultConfigEffects, getDeployConfig, setDeployConfig
 import {slugify} from "./slugify.js";
 import {Telemetry} from "./telemetry.js";
 import type {TtyEffects} from "./tty.js";
-import {bold, defaultEffects as defaultTtyEffects, inverse, link, underline, yellow} from "./tty.js";
+import {bold, defaultEffects as defaultTtyEffects, faint, inverse, link, underline, yellow} from "./tty.js";
 
 const DEPLOY_POLL_MAX_MS = 1000 * 60 * 5;
 const DEPLOY_POLL_INTERVAL_MS = 1000 * 5;
@@ -36,8 +39,7 @@ export interface DeployOptions {
   config: Config;
   message?: string;
   deployPollInterval?: number;
-  ifBuildStale: "prompt" | "build" | "cancel" | "deploy";
-  ifBuildMissing: "prompt" | "build" | "cancel";
+  force: "build" | "deploy" | null;
   maxConcurrency?: number;
 }
 
@@ -50,6 +52,7 @@ export interface DeployEffects extends ConfigEffects, TtyEffects, AuthEffects {
   output: NodeJS.WritableStream;
   visitFiles: (root: string) => Generator<string>;
   stat: (path: string) => Promise<Stats>;
+  build: ({config, addPublic}: BuildOptions, effects?: BuildEffects) => Promise<void>;
 }
 
 const defaultEffects: DeployEffects = {
@@ -63,7 +66,8 @@ const defaultEffects: DeployEffects = {
   input: process.stdin,
   output: process.stdout,
   visitFiles,
-  stat
+  stat,
+  build
 };
 
 type DeployTargetInfo =
@@ -72,19 +76,12 @@ type DeployTargetInfo =
 
 /** Deploy a project to ObservableHQ */
 export async function deploy(
-  {
-    config,
-    message,
-    ifBuildMissing,
-    ifBuildStale,
-    deployPollInterval = DEPLOY_POLL_INTERVAL_MS,
-    maxConcurrency
-  }: DeployOptions,
+  {config, message, force, deployPollInterval = DEPLOY_POLL_INTERVAL_MS, maxConcurrency}: DeployOptions,
   effects = defaultEffects
 ): Promise<void> {
   const {clack} = effects;
-  Telemetry.record({event: "deploy", step: "start", ifBuildMissing, ifBuildStale});
-  clack.intro(inverse(" observable deploy "));
+  Telemetry.record({event: "deploy", step: "start", force});
+  clack.intro(`${inverse(" observable deploy ")} ${faint(`v${process.env.npm_package_version}`)}`);
 
   let apiKey = await effects.getObservableApiKey(effects);
   const apiClient = new ObservableApiClient(apiKey ? {apiKey, clack} : {clack});
@@ -101,17 +98,6 @@ export async function deploy(
     throw new CliError(
       `Found invalid project slug in ${join(config.root, ".observablehq", "deploy.json")}: ${deployConfig.projectSlug}.`
     );
-  }
-
-  const legacyConfig = config as unknown as {deploy: null | {project: string; workspace: string}};
-  if (legacyConfig.deploy && deployConfig.projectId) {
-    if (!deployConfig.projectSlug || !deployConfig.workspaceLogin) {
-      clack.log.info("Copying deploy information from the config file to deploy.json.");
-      deployConfig.projectSlug = legacyConfig.deploy.project;
-      deployConfig.workspaceLogin = legacyConfig.deploy.workspace.replace(/^@/, "");
-      effects.setDeployConfig(config.root, deployConfig);
-    }
-    clack.log.info("The `deploy` section of your config file is obsolete and can be deleted.");
   }
 
   let currentUser: GetCurrentUserResponse | null = null;
@@ -196,84 +182,73 @@ export async function deploy(
 
   const previousProjectId = deployConfig?.projectId;
   let targetDescription: string;
-
   let buildFilePaths: string[] | null = null;
+  let doBuild = force === "build";
 
-  let doBuild = false;
-  let youngestAge;
+  // Check if the build is missing. If it is present, then continue; otherwise
+  // if --no-build was specified, then error; otherwise if in a tty, ask the
+  // user if they want to build; otherwise build automatically.
   try {
-    ({buildFilePaths, youngestAge} = await findBuildFiles(effects, config));
+    buildFilePaths = await findBuildFiles(effects, config);
   } catch (error) {
     if (CliError.match(error, {message: /No build files found/})) {
-      switch (ifBuildMissing) {
-        case "cancel":
-          throw new CliError("No build files found.");
-        case "build": {
-          doBuild = true;
-          break;
-        }
-        case "prompt": {
-          if (!effects.isTty)
-            throw new CliError("No build files found. Pass --if-missing=build to automatically rebuild.");
-          const choice = await clack.select({
+      if (force === "deploy") {
+        throw new CliError("No build files found.");
+      } else if (!force) {
+        if (effects.isTty) {
+          const choice = await clack.confirm({
             message: "No build files found. Do you want to build the project now?",
-            options: [
-              {value: true, label: "Yes, build now and then deploy"},
-              {value: false, label: "No, cancel deploy"}
-            ]
+            active: "Yes, build and then deploy",
+            inactive: "No, cancel deploy"
           });
           if (clack.isCancel(choice) || !choice) {
             throw new CliError("User canceled deploy", {print: false, exitCode: 0});
           }
-          doBuild = true;
-          break;
         }
+        doBuild = true;
       }
     } else {
       throw error;
     }
   }
 
-  if (!doBuild && youngestAge > BUILD_AGE_WARNING_MS) {
-    switch (ifBuildStale) {
-      case "cancel":
-        throw new CliError("Build is stale.");
-      case "build": {
-        doBuild = true;
-        break;
-      }
-      case "prompt": {
-        if (!effects.isTty) throw new CliError("Build is stale. Pass --if-stale=build to automatically rebuild.");
-        const ageFormatted =
-          youngestAge < 1000 * 60 * 60
-            ? `${Math.round(youngestAge / 1000 / 60)} minutes ago`
-            : youngestAge < 1000 * 60 * 60 * 12
-            ? `${Math.round(youngestAge / 1000 / 60 / 60)} hours ago`
-            : `at ${new Date(Date.now() - youngestAge).toLocaleString()}`;
-        type ChoiceValue = "build-now" | "deploy-stale" | "cancel";
-        const choice = await clack.select<{value: ChoiceValue; label: string}[], ChoiceValue>({
-          message: `Your project was last built ${ageFormatted}. What do you want to do?`,
-          options: [
-            {value: "build-now", label: "Rebuild and then deploy"},
-            {value: "deploy-stale", label: "Deploy as is"},
-            {value: "cancel", label: "Cancel the deploy"}
-          ]
-        });
-        if (clack.isCancel(choice) || choice === "cancel") {
-          throw new CliError("User canceled deploy", {print: false, exitCode: 0});
-        }
-        doBuild = choice === "build-now";
-      }
+  // If we haven’t decided yet whether or not we’re building, check how old the
+  // build is, and whether it is stale (i.e., whether the source files are newer
+  // than the build). If in a tty, ask the user if they want to build; otherwise
+  // deploy as is.
+  if (!doBuild && !force && effects.isTty) {
+    const leastRecentBuildMtimeMs = await findLeastRecentBuildMtimeMs(effects, config);
+    const mostRecentSourceMtimeMs = await findMostRecentSourceMtimeMs(effects, config);
+    const buildAge = Date.now() - leastRecentBuildMtimeMs;
+    let initialValue = buildAge > BUILD_AGE_WARNING_MS;
+    if (mostRecentSourceMtimeMs > leastRecentBuildMtimeMs) {
+      clack.log.warn(
+        wrapAnsi(`Your source files have changed since you built ${formatAge(buildAge)}.`, effects.outputColumns)
+      );
+      initialValue = true;
+    } else {
+      clack.log.info(wrapAnsi(`You built this project ${formatAge(buildAge)}.`, effects.outputColumns));
     }
+    const choice = await clack.confirm({
+      message: "Would you like to build again before deploying?",
+      initialValue,
+      active: "Yes, build and then deploy",
+      inactive: "No, deploy as is"
+    });
+    if (clack.isCancel(choice)) throw new CliError("User canceled deploy", {print: false, exitCode: 0});
+    doBuild = !!choice;
   }
 
   if (doBuild) {
     clack.log.step("Building project");
-    await build({config}, new FileBuildEffects(config.output, {logger: effects.logger, output: effects.output}));
-    ({buildFilePaths} = await findBuildFiles(effects, config));
+    await effects.build(
+      {config},
+      new FileBuildEffects(config.output, {logger: effects.logger, output: effects.output})
+    );
+    buildFilePaths = await findBuildFiles(effects, config);
   }
 
-  if (!buildFilePaths || !buildFilePaths) throw new Error("No build files found.");
+  if (!buildFilePaths) throw new Error("No build files found.");
 
   if (!deployTarget.create) {
     // Check last deployed state. If it's not the same project, ask the user if
@@ -368,7 +343,7 @@ export async function deploy(
   });
 
   // Create the new deploy on the server
-  let deployId;
+  let deployId: string;
   try {
     deployId = await apiClient.postDeploy({projectId: deployTarget.project.id, message});
   } catch (error) {
@@ -387,23 +362,61 @@ export async function deploy(
     throw error;
   }
 
-  // Upload the files
-  const uploadSpinner = clack.spinner();
-  uploadSpinner.start("");
+  const progressSpinner = clack.spinner();
+  progressSpinner.start("");
 
+  // upload a manifest before uploading the files
+  progressSpinner.message("Hashing local files");
+  const manifestFileInfo: DeployManifestFile[] = [];
+  await runAllWithConcurrencyLimit(buildFilePaths, async (path) => {
+    const fullPath = join(config.output, path);
+    const statInfo = await stat(fullPath);
+    const hash = createHash("sha512")
+      .update(await readFile(fullPath))
+      .digest("base64");
+    manifestFileInfo.push({path, size: statInfo.size, hash});
+  });
+  progressSpinner.message("Sending file manifest to server");
+  const instructions = await apiClient.postDeployManifest(deployId, manifestFileInfo);
+  const fileErrors: {path: string; detail: string | null}[] = [];
+  for (const fileInstruction of instructions.files) {
+    if (fileInstruction.status === "error") {
+      fileErrors.push({path: fileInstruction.path, detail: fileInstruction.detail});
+    }
+  }
+  if (fileErrors.length) {
+    clack.log.error(
+      "The server rejected some files from the upload:\n\n" +
+        fileErrors.map(({path, detail}) => `  - ${path} - ${detail ? `(${detail})` : "no details"}`).join("\n")
+    );
+  }
+  if (instructions.status === "error" || fileErrors.length) {
+    throw new CliError(`Server rejected deploy manifest${instructions.detail ? `: ${instructions.detail}` : ""}`);
+  }
+  const filesToUpload: string[] = instructions.files
+    .filter((instruction) => instruction.status === "upload")
+    .map((instruction) => instruction.path);
+
+  // Upload the files
   const rateLimiter = new RateLimiter(5);
-  const waitForRateLimit = buildFilePaths.length <= 300 ? () => {} : () => rateLimiter.wait();
+  const waitForRateLimit = filesToUpload.length <= 300 ? async () => {} : () => rateLimiter.wait();
 
   await runAllWithConcurrencyLimit(
-    buildFilePaths,
+    filesToUpload,
     async (path, i) => {
       await waitForRateLimit();
-      uploadSpinner.message(`${i + 1} / ${buildFilePaths!.length} ${path.slice(0, effects.outputColumns - 10)}`);
+      progressSpinner.message(
+        `${i + 1} / ${filesToUpload.length} ${faint("uploading")} ${path.slice(0, effects.outputColumns - 17)}`
+      );
       await apiClient.postDeployFile(deployId, join(config.output, path), path);
     },
     {maxConcurrency}
   );
-  uploadSpinner.stop(`${buildFilePaths.length} uploaded`);
+  progressSpinner.stop(
+    `${filesToUpload.length} uploaded, ${buildFilePaths.length - filesToUpload.length} unchanged, ${
+      buildFilePaths.length
+    } total.`
+  );
 
   // Mark the deploy as uploaded
   await apiClient.postDeployUploaded(deployId);
@@ -420,6 +433,7 @@ export async function deploy(
     }
     deployInfo = await apiClient.getDeploy(deployId);
     switch (deployInfo.status) {
+      case "created":
       case "pending":
         break;
       case "uploaded":
@@ -444,43 +458,57 @@ export async function deploy(
   Telemetry.record({event: "deploy", step: "finish"});
 }
 
-async function findBuildFiles(
-  effects: DeployEffects,
-  config: Config
-): Promise<{buildFilePaths: string[]; youngestAge: number}> {
-  let youngestAge = Infinity;
-  const buildFilePaths: string[] = [];
-  const nowMs = Date.now();
+async function findMostRecentSourceMtimeMs(effects: DeployEffects, config: Config): Promise<number> {
+  let mostRecentMtimeMs = -Infinity;
+  for await (const file of effects.visitFiles(config.root)) {
+    const joinedPath = join(config.root, file);
+    const stat = await effects.stat(joinedPath);
+    if (stat.mtimeMs > mostRecentMtimeMs) {
+      mostRecentMtimeMs = stat.mtimeMs;
+    }
+  }
+  const cachePath = join(config.root, ".observablehq/cache");
+  try {
+    const cacheStat = await effects.stat(cachePath);
+    if (cacheStat.mtimeMs > mostRecentMtimeMs) {
+      mostRecentMtimeMs = cacheStat.mtimeMs;
+    }
+  } catch (error) {
+    if (!isEnoent(error)) {
+      throw error;
+    }
+  }
+  return mostRecentMtimeMs;
+}
 
+async function findLeastRecentBuildMtimeMs(effects: DeployEffects, config: Config): Promise<number> {
+  let leastRecentMtimeMs = Infinity;
+  for await (const file of effects.visitFiles(config.output)) {
+    const joinedPath = join(config.output, file);
+    const stat = await effects.stat(joinedPath);
+    if (stat.mtimeMs < leastRecentMtimeMs) {
+      leastRecentMtimeMs = stat.mtimeMs;
+    }
+  }
+  return leastRecentMtimeMs;
+}
+
+async function findBuildFiles(effects: DeployEffects, config: Config): Promise<string[]> {
+  const buildFilePaths: string[] = [];
   try {
     for await (const file of effects.visitFiles(config.output)) {
-      let stat: Stats;
-      const joinedPath = join(config.output, file);
-      try {
-        stat = await effects.stat(joinedPath);
-      } catch (error) {
-        throw new CliError(`Error accessing file ${file}: ${error}`, {cause: error});
-      }
-      if (stat?.isFile()) {
-        buildFilePaths.push(file);
-        // youngestAge = Math.min(youngestAge, nowMs - stat.ctimeMs);
-        if (nowMs - stat.ctimeMs < youngestAge) {
-          youngestAge = nowMs - stat.ctimeMs;
-        }
-      }
+      buildFilePaths.push(file);
     }
   } catch (error) {
     if (isEnoent(error)) {
       throw new CliError(`No build files found at ${config.output}`, {cause: error});
     }
-    throw new CliError(`Error enumerating build files: ${error}`, {cause: error});
+    throw error;
   }
-
   if (!buildFilePaths.length) {
     throw new CliError(`No build files found at ${config.output}`);
   }
-
-  return {buildFilePaths, youngestAge};
+  return buildFilePaths;
 }
 
 // export for testing
@@ -605,4 +633,20 @@ export async function promptDeployTarget(
   }
 
   return {create: true, workspace, projectSlug, title, accessLevel};
+}
+
+function formatAge(age: number): string {
+  if (age < 1000 * 60) {
+    const seconds = Math.round(age / 1000);
+    return `${seconds} second${seconds === 1 ? "" : "s"} ago`;
+  }
+  if (age < 1000 * 60 * 60) {
+    const minutes = Math.round(age / 1000 / 60);
+    return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+  if (age < 1000 * 60 * 60 * 12) {
+    const hours = Math.round(age / 1000 / 60 / 60);
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  return `at ${new Date(Date.now() - age).toLocaleString("en")}`;
 }

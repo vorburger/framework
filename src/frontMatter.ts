@@ -1,9 +1,9 @@
 import matter from "gray-matter";
-import {normalizeTheme} from "./config.js";
-import type {RenderPageConfig} from "./render.js";
+import {normalizeTheme, stringOrNull} from "./config.js";
+import type {PageConfig} from "./page.js";
 import {yellow} from "./tty.js";
 
-export type FrontMatter = RenderPageConfig; // TODO remove
+export type FrontMatter = PageConfig;
 
 export function readFrontMatter(input: string): {content: string; data: FrontMatter} {
   try {
@@ -11,7 +11,7 @@ export function readFrontMatter(input: string): {content: string; data: FrontMat
     return {content, data: normalizeFrontMatter(data)};
   } catch (error: any) {
     if ("mark" in error) {
-      console.warn(`${yellow("Invalid front matter")}: ${error.reason}`);
+      console.warn(`${yellow("Invalid front matter:")} ${error.reason}`);
       return {data: {}, content: input};
     }
     throw error;
@@ -35,10 +35,6 @@ export function normalizeFrontMatter(spec: any = {}): FrontMatter {
   if (style !== undefined) frontMatter.style = stringOrNull(style);
   if (theme !== undefined) frontMatter.theme = normalizeTheme(theme);
   return frontMatter;
-}
-
-function stringOrNull(spec: unknown): string | null {
-  return spec == null || spec === false ? null : String(spec);
 }
 
 function normalizeToc(spec: unknown): {show?: boolean; label?: string} {

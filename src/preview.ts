@@ -16,6 +16,7 @@ import type {WebSocket} from "ws";
 import {WebSocketServer} from "ws";
 import type {Config} from "./config.js";
 import {readConfig} from "./config.js";
+import type {LoaderResolver} from "./dataloader.js";
 import {HttpError, isEnoent, isHttpError, isSystemError} from "./error.js";
 import {getClientPath} from "./files.js";
 import type {FileWatchers} from "./fileWatchers.js";
@@ -26,7 +27,7 @@ import type {MarkdownCode, MarkdownPage} from "./markdown.js";
 import {populateNpmCache} from "./npm.js";
 import type {PageGenerator} from "./page.js";
 import {findPage} from "./page.js";
-import {isPathImport} from "./path.js";
+import {isPathImport, resolvePath} from "./path.js";
 import {renderPage} from "./render.js";
 import type {Resolvers} from "./resolvers.js";
 import {getResolvers} from "./resolvers.js";
@@ -175,7 +176,8 @@ export class PreviewServer {
       } else {
         if ((pathname = normalize(pathname)).startsWith("..")) throw new Error("Invalid path: " + pathname);
 
-        // Normalize the pathname (e.g., dropping ".html" if cleanUrls is true).
+        // Normalize the pathname (e.g., adding ".html" if cleanUrls is false,
+        // dropping ".html" if cleanUrls is true) and redirect if necessary.
         const normalizedPathname = config.md.normalizeLink(pathname);
         if (url.pathname !== normalizedPathname) {
           res.writeHead(302, {Location: normalizedPathname + url.search});
@@ -184,8 +186,10 @@ export class PreviewServer {
         }
 
         // If this path ends with a slash, then add an implicit /index to the
-        // end of the path.
+        // end of the path. Otherwise, remove the .html extension (we use clean
+        // paths as the internal canonical representation; see normalizePage).
         if (pathname.endsWith("/")) pathname = join(pathname, "index");
+        else pathname = pathname.replace(/\.html$/, "");
 
         // Lastly, serve the corresponding page, if it exists. Anything else
         // should 404; static files should be matched above.
@@ -339,7 +343,7 @@ function handleWatch(socket: WebSocket, req: IncomingMessage, configPromise: Pro
           type: "update",
           html: diffHtml(previousHtml, html),
           code: diffCode(previousCode, code),
-          files: diffFiles(previousFiles, files),
+          files: diffFiles(previousFiles, files, getLastModifiedResolver(loaders, path)),
           tables: diffTables(previousTables, tables, previousFiles, files),
           stylesheets: diffStylesheets(previousStylesheets, stylesheets),
           hash: {previous: previousHash, current: hash}
@@ -475,10 +479,14 @@ function diffCode(oldCode: Map<string, string>, newCode: Map<string, string>): C
   return patch;
 }
 
-type FileDeclaration = {name: string; mimeType?: string; path: string};
+type FileDeclaration = {name: string; mimeType: string; lastModified: number; path: string};
 type FilePatch = {removed: string[]; added: FileDeclaration[]};
 
-function diffFiles(oldFiles: Map<string, string>, newFiles: Map<string, string>): FilePatch {
+function diffFiles(
+  oldFiles: Map<string, string>,
+  newFiles: Map<string, string>,
+  getLastModified: (name: string) => number | undefined
+): FilePatch {
   const patch: FilePatch = {removed: [], added: []};
   for (const [name, path] of oldFiles) {
     if (newFiles.get(name) !== path) {
@@ -487,10 +495,19 @@ function diffFiles(oldFiles: Map<string, string>, newFiles: Map<string, string>)
   }
   for (const [name, path] of newFiles) {
     if (oldFiles.get(name) !== path) {
-      patch.added.push({name, mimeType: mime.getType(name) ?? undefined, path});
+      patch.added.push({
+        name,
+        mimeType: mime.getType(name) ?? "application/octet-stream",
+        lastModified: getLastModified(name) ?? NaN,
+        path
+      });
     }
   }
   return patch;
+}
+
+function getLastModifiedResolver(loaders: LoaderResolver, path: string): (name: string) => number | undefined {
+  return (name) => loaders.getSourceLastModified(resolvePath(path, name));
 }
 
 type TableDeclaration = {name: string; path: string};

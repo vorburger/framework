@@ -21,7 +21,7 @@ The following options are supported.
 
 ## root
 
-The path to the source root; defaults to `docs`.
+The path to the source root; defaults to `src`. (Prior to <a href="https://github.com/observablehq/framework/releases/tag/v1.7.0" class="observablehq-version-badge" data-version="^1.7.0" title="Added in 1.7.0"></a>, the default was `docs`.)
 
 ## output
 
@@ -67,9 +67,9 @@ See the [list of available themes](./themes) for more.
 
 ## style
 
-The path to a custom stylesheet, relative to the source root. This option takes precedence over the [theme option](#theme) (if any), providing more control by allowing you to remove or alter the default stylesheet and define a custom theme.
+The path to a custom stylesheet, relative to the source root (typically `src`). This option takes precedence over the [theme option](#theme) (if any), providing more control by allowing you to remove or alter the default stylesheet and define a custom theme.
 
-The custom stylesheet should typically import `observablehq:default.css` to build on the default styles. You can also import any of the built-in themes. For example, to create a stylesheet that builds up on the `air` theme, create a `custom-style.css` file in the `docs` folder, then set the style option to `custom-style.css`:
+The custom stylesheet should typically import `observablehq:default.css` to build on the default styles. You can also import any of the built-in themes. For example, to create a stylesheet that builds up on the `air` theme, create a `custom-style.css` file in the source root, then set the style option to `custom-style.css`:
 
 ```css
 @import url("observablehq:default.css");
@@ -116,7 +116,7 @@ An array containing pages and sections. If not specified, it defaults to all Mar
 
 Both pages and sections have a **name**, which typically corresponds to the page’s title. The name gets displayed in the sidebar. Clicking on a page navigates to the corresponding **path**, which should start with a leading slash and be relative to the root; the path can also be specified as a full URL to navigate to an external site. Each section must specify an array of **pages**.
 
-Sections may be **collapsible**. <a href="https://github.com/observablehq/framework/pull/1208" class="observablehq-version-badge" data-version="prerelease" title="Added in #1208"></a> If the **open** option is set, the **collapsible** option defaults to true; otherwise it defaults to false. If the section is not collapsible, the **open** option is ignored and the section is always open; otherwise, the **open** option defaults to true. When a section is collapsible, clicking on a section header opens or closes that section. A section will always be open if the current page belongs to that section.
+Sections may be **collapsible**. <a href="https://github.com/observablehq/framework/releases/tag/v1.6.0" class="observablehq-version-badge" data-version="^1.6.0" title="Added in 1.6.0"></a> If the **open** option is set, the **collapsible** option defaults to true; otherwise it defaults to false. If the section is not collapsible, the **open** option is ignored and the section is always open; otherwise, the **open** option defaults to true. When a section is collapsible, clicking on a section header opens or closes that section. A section will always be open if the current page belongs to that section.
 
 For example, here **pages** specifies two sections and a total of four pages:
 
@@ -161,16 +161,6 @@ An HTML fragment to add to the header. Defaults to the empty string.
 ## footer
 
 An HTML fragment to add to the footer. Defaults to “Built with Observable.”
-
-## scripts
-
-Additional scripts to add to the head, such as for analytics. Unlike the **head** option, this allows you to reference a local script in the source root.
-
-```js run=false
-export default {
-  scripts: [{type: "module", async: true, src: "analytics.js"}]
-};
-```
 
 ## base
 
@@ -262,3 +252,15 @@ export default {
   markdownIt: (md) => md.use(MarkdownItFootnote)
 };
 ```
+
+## typographer <a href="https://github.com/observablehq/framework/releases/tag/v1.7.0" class="observablehq-version-badge" data-version="^1.7.0" title="Added in 1.7.0"></a>
+
+If true, enables simple typographic replacements in Markdown, such as replacing `(c)` with `©` and converting straight quotes to curly quotes. See also the [quotes](#quotes) option, which should be set for non-English languages if the **typographer** option is enabled. For the full list of replacements, see [markdown-it](https://github.com/markdown-it/markdown-it/blob/master/lib/rules_core/replacements.mjs). Defaults to false.
+
+## quotes <a href="https://github.com/observablehq/framework/releases/tag/v1.7.0" class="observablehq-version-badge" data-version="^1.7.0" title="Added in 1.7.0"></a>
+
+The set of replacements for straight double and single quotes used when the [**typographer** option](#typographer) is enabled. Defaults to `["“", "”", "‘", "’"]` which is suitable for English. For example, you can use `["«", "»", "„", "“"]` for Russian, `["„", "“", "‚", "‘"]` for German, and `["«\xa0", "\xa0»", "‹\xa0", "\xa0›"]` for French.
+
+## linkify <a href="https://github.com/observablehq/framework/releases/tag/v1.7.0" class="observablehq-version-badge" data-version="^1.7.0" title="Added in 1.7.0"></a>
+
+If true (the default), automatically convert URL-like text to links in Markdown.

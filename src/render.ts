@@ -3,7 +3,7 @@ import type {Config, Page, Script, Section} from "./config.js";
 import {mergeStyle, mergeToc} from "./config.js";
 import {getClientPath} from "./files.js";
 import type {Html, HtmlResolvers} from "./html.js";
-import {html, parseHtml, rewriteHtml, rewriteHtmlPaths} from "./html.js";
+import {html, parseHtml, rewriteHtml} from "./html.js";
 import {transpileJavaScript} from "./javascript/transpile.js";
 import type {PageConfig, PageSource} from "./page.js";
 import type {PageLink} from "./pager.js";
@@ -41,7 +41,7 @@ ${
         .filter((title): title is string => !!title)
         .join(" | ")}</title>\n`
     : ""
-}${renderHead(page.head, resolvers, options)}${
+}${renderHead(page.head, resolvers)}${
     path === "/404"
       ? html.unsafe(`\n<script type="module">
 
@@ -81,7 +81,9 @@ ${preview ? `\nopen({hash: ${JSON.stringify(resolvers.hash)}, eval: (body) => ev
     toc.show ? html`\n${renderToc(findHeaders(page), toc.label)}` : ""
   }
 <div id="observablehq-center">${renderHeader(page.header, resolvers)}
-<main id="observablehq-main" class="observablehq${draft ? " observablehq--draft" : ""}">${html.unsafe(rewriteHtml(page.body, resolvers))}</main>${renderFooter(page.footer, resolvers, options)}
+<main id="observablehq-main" class="observablehq${draft ? " observablehq--draft" : ""}">${html.unsafe(
+    rewriteHtml(page.body, resolvers)
+  )}</main>${renderFooter(page.footer, resolvers, options)}
 </div>
 `);
 }
@@ -178,12 +180,12 @@ interface Header {
   href: string;
 }
 
-const tocSelector = "h1:not(:first-of-type), h2:first-child, :not(h1) + h2";
+const tocSelector = "h1:not(:first-of-type)[id], h2:first-child[id], :not(h1) + h2[id]";
 
 function findHeaders(page: PageSource): Header[] {
   return Array.from(parseHtml(page.body).document.querySelectorAll(tocSelector))
-    .map((node) => ({label: node.textContent, href: node.firstElementChild?.getAttribute("href")}))
-    .filter((d): d is Header => !!d.label && !!d.href);
+    .map((node) => ({label: node.textContent, href: `#${node.id}`}))
+    .filter((d): d is Header => !!d.label);
 }
 
 function renderToc(headers: Header[], label: string): Html {
@@ -208,26 +210,17 @@ function renderListItem(page: Page, path: string, normalizeLink: (href: string) 
   }"><a href="${normalizeLink(relativePath(path, page.path))}">${page.name}</a></li>`;
 }
 
-function renderHead(head: PageSource["head"], resolvers: Resolvers, {scripts, root}: RenderOptions): Html {
+function renderHead(head: PageSource["head"], resolvers: Resolvers): Html {
   const {stylesheets, staticImports, resolveImport, resolveStylesheet} = resolvers;
-  const resolveScript = (src: string) => (/^\w+:/.test(src) ? src : resolveImport(relativePath(root, src)));
   return html`<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>${
-    Array.from(new Set(Array.from(stylesheets, (i) => resolveStylesheet(i))), renderStylesheetPreload) // <link rel=preload as=style>
+    Array.from(new Set(Array.from(stylesheets, resolveStylesheet)), renderStylesheetPreload) // <link rel=preload as=style>
   }${
-    Array.from(new Set(Array.from(stylesheets, (i) => resolveStylesheet(i))), renderStylesheet) // <link rel=stylesheet>
+    Array.from(new Set(Array.from(stylesheets, resolveStylesheet)), renderStylesheet) // <link rel=stylesheet>
   }${
-    Array.from(new Set(Array.from(staticImports, (i) => resolveImport(i))), renderModulePreload) // <link rel=modulepreload>
+    Array.from(new Set(Array.from(staticImports, resolveImport)), renderModulePreload) // <link rel=modulepreload>
   }${
     head ? html`\n${html.unsafe(rewriteHtml(head, resolvers))}` : null // arbitrary user content
-  }${
-    Array.from(scripts, (s) => renderScript(s, resolveScript)) // <script src>
   }`;
-}
-
-function renderScript(script: Script, resolve: (specifier: string) => string): Html {
-  return html`\n<script${script.type ? html` type="${script.type}"` : null}${
-    script.async ? html` async` : null
-  } src="${resolve(script.src)}"></script>`;
 }
 
 function renderStylesheet(href: string): Html {
@@ -285,18 +278,4 @@ export function resolveStyle(
     : "path" in style
     ? relativePath(path, style.path)
     : `observablehq:theme-${style.theme.join(",")}.css`;
-}
-
-export function resolveHtml(
-  key: "head" | "header" | "footer",
-  data: PageConfig,
-  {path, [key]: defaultValue}: Partial<Pick<Config, typeof key>> & {path: string}
-): string | null {
-  return data[key] !== undefined
-    ? data[key]
-      ? String(data[key])
-      : null
-    : defaultValue != null
-    ? rewriteHtmlPaths(defaultValue, path)
-    : null;
 }

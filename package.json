@@ -1,7 +1,7 @@
 {
   "name": "@observablehq/framework",
   "license": "ISC",
-  "version": "1.5.1",
+  "version": "1.7.0",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -57,6 +57,7 @@
     "@observablehq/inputs": "^0.10.6",
     "@observablehq/runtime": "^5.9.4",
     "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-virtual": "^3.0.2",
     "acorn": "^8.11.2",
@@ -65,6 +66,7 @@
     "cross-env": "^7.0.3",
     "cross-spawn": "^7.0.3",
     "d3-array": "^3.2.4",
+    "d3-hierarchy": "^3.1.2",
     "esbuild": "^0.20.1",
     "fast-array-diff": "^1.1.0",
     "fast-deep-equal": "^3.1.3",

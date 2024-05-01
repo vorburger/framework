@@ -4,7 +4,7 @@ keywords: file, fileattachment, attachment
 
 # Files
 
-Load files — whether static or generated dynamically by a [data loader](../loaders) — using the built-in `FileAttachment` function. This is available by default in Markdown, but you can import it explicitly like so:
+Load files — whether static or generated dynamically by a [data loader](./loaders) — using the built-in `FileAttachment` function. This is available by default in Markdown, but you can import it explicitly like so:
 
 ```js echo
 import {FileAttachment} from "npm:@observablehq/stdlib";
@@ -64,6 +64,7 @@ For missing files, `file.lastModified` is undefined. The `file.mimeType` is dete
 | [`file.arrow`][arrow]        | [`Table`][arrow-table]
 | [`file.blob`][binary]        | [`Blob`][blob]
 | [`file.csv`][csv]            | [`Array`][array]
+| [`file.dsv`][csv]            | [`Array`][array]
 | [`file.html`][markup]        | [`Document`][document]
 | [`file.image`][media]        | [`HTMLImageElement`][image]
 | [`file.json`][json]          | [`Array`][array], [`Object`][object], _etc._
@@ -210,11 +211,11 @@ display(total);
 
 ## Routing
 
-Attached files live in the source root (by default `docs`) alongside your Markdown pages. For example, say `index.md` has some JavaScript code that references `FileAttachment("quakes.csv")`:
+Attached files live in the source root (typically `src`) alongside your Markdown pages. For example, say `index.md` has some JavaScript code that references `FileAttachment("quakes.csv")`:
 
 ```ini
 .
-├─ docs
+├─ src
 │  ├─ index.md
 │  └─ quakes.csv
 └─ ...

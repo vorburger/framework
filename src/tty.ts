@@ -30,10 +30,10 @@ export interface TtyEffects {
 export const defaultEffects: TtyEffects = {
   isTty: isatty(process.stdin.fd),
   logger: console,
-  outputColumns: process.stdout.columns ?? 80
+  outputColumns: Math.min(80, process.stdout.columns ?? 80)
 };
 
-function stripColor(s: string): string {
+export function stripColor(s: string): string {
   // eslint-disable-next-line no-control-regex
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }

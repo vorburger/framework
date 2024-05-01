@@ -9,6 +9,7 @@ import JSZip from "jszip";
 import {extract} from "tar-stream";
 import {maybeStat, prepareOutput} from "./files.js";
 import {FileWatchers} from "./fileWatchers.js";
+import {formatByteSize} from "./format.js";
 import {getFileInfo} from "./javascript/module.js";
 import type {Logger, Writer} from "./logger.js";
 import {cyan, faint, green, red, yellow} from "./tty.js";
@@ -65,7 +66,7 @@ export class LoaderResolver {
    * source root, if it exists. If there is no such loader, returns undefined.
    * For files within archives, we find the first parent folder that exists, but
    * abort if we find a matching folder or reach the source root; for example,
-   * if docs/data exists, we won’t look for a docs/data.zip.
+   * if src/data exists, we won’t look for a src/data.zip.
    */
   find(targetPath: string, {useStale = false} = {}): Loader | undefined {
     const exact = this.findExact(targetPath, {useStale});
@@ -193,7 +194,7 @@ export class LoaderResolver {
 
 export abstract class Loader {
   /**
-   * The source root relative to the current working directory, such as docs.
+   * The source root relative to the current working directory, such as src.
    */
   readonly root: string;
 
@@ -271,8 +272,9 @@ export abstract class Loader {
     const start = performance.now();
     command.then(
       (path) => {
+        const {size} = statSync(join(this.root, path));
         effects.logger.log(
-          `${green("success")} ${cyan(formatSize(statSync(join(this.root, path)).size))} ${faint(
+          `${green("success")} ${size ? cyan(formatByteSize(size)) : yellow("empty output")} ${faint(
             `in ${formatElapsed(start)}`
           )}`
         );
@@ -398,12 +400,6 @@ const extractors = [
   [".tar.gz", TarGzExtractor],
   [".tgz", TarGzExtractor]
 ] as const;
-
-function formatSize(size: number): string {
-  if (!size) return yellow("empty output");
-  const e = Math.floor(Math.log(size) / Math.log(1024));
-  return `${+(size / 1024 ** e).toFixed(2)} ${["bytes", "KiB", "MiB", "GiB", "TiB"][e]}`;
-}
 
 function formatElapsed(start: number): string {
   const elapsed = performance.now() - start;

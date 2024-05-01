@@ -23,9 +23,11 @@ async function remote_fetch(file) {
 
 export class AbstractFile {
   constructor(name, mimeType = "application/octet-stream", lastModified) {
-    Object.defineProperty(this, "name", {value: `${name}`, enumerable: true});
-    Object.defineProperty(this, "mimeType", {value: `${mimeType}`, enumerable: true});
-    if (lastModified !== undefined) Object.defineProperty(this, "lastModified", {value: Number(lastModified), enumerable: true}); // prettier-ignore
+    Object.defineProperties(this, {
+      name: {value: `${name}`, enumerable: true},
+      mimeType: {value: `${mimeType}`, enumerable: true},
+      lastModified: {value: +lastModified, enumerable: true}
+    });
   }
   async blob() {
     return (await remote_fetch(this)).blob();
@@ -72,7 +74,7 @@ export class AbstractFile {
     return Arrow.tableFromIPC(response);
   }
   async parquet() {
-    const [Arrow, Parquet, buffer] = await Promise.all([import("npm:apache-arrow"), import("npm:parquet-wasm/esm/arrow1.js").then(async (Parquet) => (await Parquet.default(), Parquet)), this.arrayBuffer()]); // prettier-ignore
+    const [Arrow, Parquet, buffer] = await Promise.all([import("npm:apache-arrow"), import("npm:parquet-wasm").then(async (Parquet) => (await Parquet.default(import.meta.resolve("npm:parquet-wasm/esm/parquet_wasm_bg.wasm")), Parquet)), this.arrayBuffer()]); // prettier-ignore
     return Arrow.tableFromIPC(Parquet.readParquet(new Uint8Array(buffer)).intoIPCStream());
   }
   async sqlite() {
