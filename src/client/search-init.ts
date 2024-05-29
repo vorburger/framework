@@ -9,6 +9,7 @@ const load = () => import("observablehq:search");
 input.addEventListener("focus", load, {once: true});
 input.addEventListener("keydown", load, {once: true});
 input.addEventListener("focus", () => {
+  if (input.value) return; // only restore the query if empty
   input.value = sessionStorage.getItem("search-query") ?? "";
   input.select();
 });
