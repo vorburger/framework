@@ -55,7 +55,7 @@ function renderResults(results) {
   let found;
   results = results.map(({id, score, title}) => {
     const external = /^\w+:/.test(id);
-    const href = external ? id : import.meta.resolve(`../${id}`);
+    const href = external ? id : import.meta.resolve(`..${id}`);
     return {
       title: String(title ?? "—"),
       href,
