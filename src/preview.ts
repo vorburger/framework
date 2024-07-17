@@ -33,7 +33,7 @@ import {getResolvers} from "./resolvers.js";
 import {bundleStyles, rollupClient} from "./rollup.js";
 import {searchIndex} from "./search.js";
 import {Telemetry} from "./telemetry.js";
-import {bold, faint, green, link} from "./tty.js";
+import {bold, faint, green, link, red} from "./tty.js";
 
 export interface PreviewOptions {
   config?: string;
@@ -55,6 +55,7 @@ export class PreviewServer {
   private readonly _socketServer: WebSocketServer;
   private readonly _verbose: boolean;
   private readonly _effects: LoadEffects;
+  private _dag: Map<string, Set<string>>;
 
   private constructor({
     config,
@@ -77,6 +78,7 @@ export class PreviewServer {
     this._socketServer = new WebSocketServer({server: this._server});
     this._socketServer.on("connection", this._handleConnection);
     this._effects = effects;
+    this._dag = new Map(); // TODO: read state
   }
 
   static async start({verbose = true, hostname, port, open, ...options}: PreviewOptions) {
@@ -165,13 +167,14 @@ export class PreviewServer {
       } else if (pathname.startsWith("/_chain/")) {
         machine = true;
         const [caller, path] = pathname.slice("/_chain".length).split("::");
-        // now any file that watches caller should also watch path
-        console.warn("chained data loader", {caller, path, loaders});
+        this.updateDag(caller, path);
+        this._dag.delete(path); // reset path for this file
         const file = await this.getFile(path, root, loaders);
         if (file !== undefined) return void send(req, file, {root}).pipe(res);
         throw new HttpError(`Not found: ${pathname}`, 404);
       } else if (pathname.startsWith("/_file/")) {
         const path = pathname.slice("/_file".length);
+        this._dag.delete(path); // reset path for this file
         const file = await this.getFile(path, root, loaders);
         if (file !== undefined) return void send(req, file, {root}).pipe(res);
         throw new HttpError(`Not found: ${pathname}`, 404);
@@ -261,6 +264,21 @@ export class PreviewServer {
       } catch (error) {
         if (!isEnoent(error)) throw error;
       }
+    }
+  }
+
+  updateDag(caller: string, path: string) {
+    if (!this._dag.has(caller)) this._dag.set(caller, new Set());
+    this._dag.get(caller)!.add(path);
+    const seen = new Set<string>();
+    const q = [caller];
+    while (true) {
+      const node = q.shift();
+      if (!node) return;
+      if (seen.has(node))
+        throw new Error(`${red("Circular dependency detected")}: ${[...seen, node].map(bold).join(" ← ")}`);
+      q.push(...(this._dag.get(node) ?? []));
+      seen.add(node);
     }
   }
 }
