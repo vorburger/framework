@@ -17,6 +17,7 @@ import {WebSocketServer} from "ws";
 import type {Config} from "./config.js";
 import {readConfig} from "./config.js";
 import type {LoaderResolver} from "./dataloader.js";
+import type {LoadEffects} from "./dataloader.js";
 import {HttpError, isEnoent, isHttpError, isSystemError} from "./error.js";
 import {getClientPath} from "./files.js";
 import type {FileWatchers} from "./fileWatchers.js";
@@ -54,17 +55,20 @@ export class PreviewServer {
   private readonly _server: ReturnType<typeof createServer>;
   private readonly _socketServer: WebSocketServer;
   private readonly _verbose: boolean;
+  private readonly _effects: LoadEffects;
 
   private constructor({
     config,
     root,
     server,
-    verbose
+    verbose,
+    effects
   }: {
     config?: string;
     root?: string;
     server: Server;
     verbose: boolean;
+    effects: LoadEffects;
   }) {
     this._config = config;
     this._root = root;
@@ -73,6 +77,7 @@ export class PreviewServer {
     this._server.on("request", this._handleRequest);
     this._socketServer = new WebSocketServer({server: this._server});
     this._socketServer.on("connection", this._handleConnection);
+    this._effects = effects;
   }
 
   static async start({verbose = true, hostname, port, open, ...options}: PreviewOptions) {
@@ -102,8 +107,12 @@ export class PreviewServer {
       console.log("");
     }
     if (open) openBrowser(address);
-    process.env.OBSERVABLEHQ_ADDRESS = address; // global!
-    return new PreviewServer({server, verbose, ...options});
+    const effects: LoadEffects = {
+      logger: console,
+      output: process.stdout,
+      address
+    };
+    return new PreviewServer({server, verbose, effects, ...options});
   }
 
   async _readConfig() {
@@ -159,12 +168,12 @@ export class PreviewServer {
         const [caller, path] = pathname.slice("/_chain".length).split("::");
         // now any file that watches caller should also watch path
         console.warn("chained data loader", {caller, path, loaders});
-        const file = await getFile(path, root, loaders);
+        const file = await this.getFile(path, root, loaders);
         if (file !== undefined) return void send(req, file, {root}).pipe(res);
         throw new HttpError(`Not found: ${pathname}`, 404);
       } else if (pathname.startsWith("/_file/")) {
         const path = pathname.slice("/_file".length);
-        const file = await getFile(path, root, loaders);
+        const file = await this.getFile(path, root, loaders);
         if (file !== undefined) return void send(req, file, {root}).pipe(res);
         throw new HttpError(`Not found: ${pathname}`, 404);
       } else {
@@ -235,24 +244,24 @@ export class PreviewServer {
   get server(): PreviewServer["_server"] {
     return this._server;
   }
-}
 
-async function getFile(path: string, root: string, loaders: LoaderResolver): Promise<string | undefined> {
-  const filepath = join(root, path);
-  try {
-    await access(filepath, constants.R_OK);
-    return path;
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-  }
-
-  // Look for a data loader for this file.
-  const loader = loaders.find(path);
-  if (loader) {
+  async getFile(path: string, root: string, loaders: LoaderResolver): Promise<string | undefined> {
+    const filepath = join(root, path);
     try {
-      return await loader.load();
+      await access(filepath, constants.R_OK);
+      return path;
     } catch (error) {
       if (!isEnoent(error)) throw error;
+    }
+
+    // Look for a data loader for this file.
+    const loader = loaders.find(path);
+    if (loader) {
+      try {
+        return await loader.load(this._effects);
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+      }
     }
   }
 }
