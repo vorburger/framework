@@ -317,7 +317,10 @@ class CommandLoader extends Loader {
   }
 
   async exec(output: WriteStream): Promise<void> {
-    const subprocess = spawn(this.command, this.args, {windowsHide: true, stdio: ["ignore", output, "inherit"]});
+    const address = process.env.OBSERVABLEHQ_ADDRESS;
+    if (address == null) throw new Error("chained data loaders are not implemented in this context");
+    const env = {...process.env, SERVER: `${address}_chain${this.targetPath}::`};
+    const subprocess = spawn(this.command, this.args, {windowsHide: true, stdio: ["ignore", output, "inherit"], env});
     const code = await new Promise((resolve, reject) => {
       subprocess.on("error", reject);
       subprocess.on("close", resolve);

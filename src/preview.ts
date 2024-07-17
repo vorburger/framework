@@ -95,13 +95,14 @@ export class PreviewServer {
     } else {
       await new Promise<void>((resolve) => server.listen(port, hostname, resolve));
     }
-    const url = `http://${hostname}:${port}/`;
+    const address = `http://${hostname}:${port}/`;
     if (verbose) {
       console.log(`${green(bold("Observable Framework"))} ${faint(`v${process.env.npm_package_version}`)}`);
-      console.log(`${faint("↳")} ${link(url)}`);
+      console.log(`${faint("↳")} ${link(address)}`);
       console.log("");
     }
-    if (open) openBrowser(url);
+    if (open) openBrowser(address);
+    process.env.OBSERVABLEHQ_ADDRESS = address; // global!
     return new PreviewServer({server, verbose, ...options});
   }
 
@@ -113,6 +114,7 @@ export class PreviewServer {
     const config = await this._readConfig();
     const {root, loaders} = config;
     if (this._verbose) console.log(faint(req.method!), req.url);
+    let machine = false; // machine queries don't get a full 404 error page
     try {
       const url = new URL(req.url!, "http://localhost");
       let pathname = decodeURI(url.pathname);
@@ -152,27 +154,18 @@ export class PreviewServer {
           if (!isEnoent(error)) throw error;
         }
         throw new HttpError(`Not found: ${pathname}`, 404);
+      } else if (pathname.startsWith("/_chain/")) {
+        machine = true;
+        const [caller, path] = pathname.slice("/_chain".length).split("::");
+        // now any file that watches caller should also watch path
+        console.warn("chained data loader", {caller, path, loaders});
+        const file = await getFile(path, root, loaders);
+        if (file !== undefined) return void send(req, file, {root}).pipe(res);
+        throw new HttpError(`Not found: ${pathname}`, 404);
       } else if (pathname.startsWith("/_file/")) {
         const path = pathname.slice("/_file".length);
-        const filepath = join(root, path);
-        try {
-          await access(filepath, constants.R_OK);
-          send(req, pathname.slice("/_file".length), {root}).pipe(res);
-          return;
-        } catch (error) {
-          if (!isEnoent(error)) throw error;
-        }
-
-        // Look for a data loader for this file.
-        const loader = loaders.find(path);
-        if (loader) {
-          try {
-            send(req, await loader.load(), {root}).pipe(res);
-            return;
-          } catch (error) {
-            if (!isEnoent(error)) throw error;
-          }
-        }
+        const file = await getFile(path, root, loaders);
+        if (file !== undefined) return void send(req, file, {root}).pipe(res);
         throw new HttpError(`Not found: ${pathname}`, 404);
       } else {
         if ((pathname = normalize(pathname)).startsWith("..")) throw new Error("Invalid path: " + pathname);
@@ -212,7 +205,7 @@ export class PreviewServer {
         res.statusCode = 500;
         console.error(error);
       }
-      if (req.method === "GET" && res.statusCode === 404) {
+      if (req.method === "GET" && res.statusCode === 404 && !machine) {
         try {
           const options = {...config, path: "/404", preview: true};
           const source = await readFile(join(root, "404.md"), "utf8");
@@ -224,8 +217,10 @@ export class PreviewServer {
           // ignore secondary error (e.g., no 404.md); show the original 404
         }
       }
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end(error instanceof Error ? error.message : "Oops, an error occurred");
+      if (!machine) {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end(error instanceof Error ? error.message : "Oops, an error occurred");
+      } else res.end();
     }
   };
 
@@ -239,6 +234,26 @@ export class PreviewServer {
 
   get server(): PreviewServer["_server"] {
     return this._server;
+  }
+}
+
+async function getFile(path: string, root: string, loaders: LoaderResolver): Promise<string | undefined> {
+  const filepath = join(root, path);
+  try {
+    await access(filepath, constants.R_OK);
+    return path;
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+
+  // Look for a data loader for this file.
+  const loader = loaders.find(path);
+  if (loader) {
+    try {
+      return await loader.load();
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+    }
   }
 }
 
