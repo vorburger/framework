@@ -272,9 +272,8 @@ export class PreviewServer {
     this._dag.get(caller)!.add(path);
     const seen = new Set<string>();
     const q = [caller];
-    while (true) {
-      const node = q.shift();
-      if (!node) return;
+    while (q.length) {
+      const node = q.shift()!;
       if (seen.has(node))
         throw new Error(`${red("Circular dependency detected")}: ${[...seen, node].map(bold).join(" ← ")}`);
       q.push(...(this._dag.get(node) ?? []));
